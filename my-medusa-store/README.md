@@ -54,11 +54,12 @@ This is the backend for the Medusa e-commerce store.
     npm run seed
     ```
 
-7.1 **Seed the database with additional regions and products:**
-  As above but run
-      ```bash
-    npx medusa exec ./src/scripts/seed-data.ts 
-   ```
+7.1  **Seed the database:**
+
+    To populate the database with more sample products and data, run:
+    ```bash
+    npx medusa exec ./src/scripts/seed-data.ts
+    ```
 
 8.  **Start the development server:**
     ```bash
