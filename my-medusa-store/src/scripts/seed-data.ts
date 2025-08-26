@@ -1,4 +1,8 @@
-// src/scripts/seed-data.ts -- FINAL v2 VERSION
+// src/scripts/seed-data.ts — v2-compatible seeder (regions + products)
+
+import { ExecArgs } from "@medusajs/framework/types"
+import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/framework/utils"
+import { createRegionsWorkflow, createProductsWorkflow } from "@medusajs/medusa/core-flows"
 
 const seedData = {
   products: [
@@ -111,38 +115,148 @@ const seedData = {
   ]
 };
 
-export default async function ({ container }): Promise<void> {
-  console.log("🚀 Starting data seeding...");
-  
-  // Seed Regions - NOTE THE NEW SERVICE NAME: `regionModuleService`
-  const regionService = container.resolve("regionModuleService");
+export default async function runSeed({ container }: ExecArgs): Promise<void> {
+  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
+  const salesChannelModuleService = container.resolve(Modules.SALES_CHANNEL)
+  const productModuleService = container.resolve(Modules.PRODUCT)
+  const regionModuleService = container.resolve(Modules.REGION)
+
+  logger.info("🚀 Starting data seeding...")
+
+  // Resolve default sales channel (used when creating products)
+  const defaultSalesChannel = await salesChannelModuleService.listSalesChannels({
+    name: "Default Sales Channel",
+  })
+
+  // Seed Regions using workflow (idempotent check via module service)
   for (const regionData of seedData.regions) {
-      const existing = await regionService.list({ name: regionData.name });
-      if (!existing.length) {
-          await regionService.create(regionData);
-      }
-  }
-  console.log("🌱 Regions seeded.");
+    const existingRegions = await regionModuleService.listRegions({ name: regionData.name })
 
-  // Seed Products - NOTE THE NEW SERVICE NAME: `productModuleService`
-  const productService = container.resolve("productModuleService");
+    if (!existingRegions?.length) {
+      await createRegionsWorkflow(container).run({
+        input: {
+          regions: [
+            {
+              name: regionData.name,
+              currency_code: regionData.currency_code,
+              countries: regionData.countries,
+              // Use system default payment provider
+              payment_providers: ["pp_system_default"],
+            },
+          ],
+        },
+      })
+      logger.info(`Created region: ${regionData.name}`)
+    }
+  }
+  logger.info("🌱 Regions seeded.")
+
+  // Helper: transform product seed into createProductsWorkflow input
+  const toWorkflowProduct = (p: any) => {
+    // Derive option values from variants if not provided
+    const optionTitles: string[] = (p.options || []).map((o) => o.title)
+
+  const optionValuesMap: { [key: string]: Set<string> } = {}
+    optionTitles.forEach((t) => (optionValuesMap[t] = new Set()))
+
+    for (const v of p.variants || []) {
+      (v.options || []).forEach((ov: any, idx: number) => {
+        const title = optionTitles[idx]
+        if (title && ov?.value != null) {
+          optionValuesMap[title].add(String(ov.value))
+        }
+      })
+    }
+
+    const options = optionTitles.map((title) => ({
+      title,
+      values: Array.from(optionValuesMap[title] || []),
+    }))
+
+    const variants = (p.variants || []).map((v: any) => {
+      const variantOptions = Object.create(null) as Record<string, string>
+      (v.options || []).forEach((ov: any, idx: number) => {
+        const title = optionTitles[idx]
+        if (title && ov?.value != null) {
+          variantOptions[title] = String(ov.value)
+        }
+      })
+
+      return {
+        title: v.title,
+        options: variantOptions,
+        prices: v.prices,
+      }
+    })
+
+    return {
+      title: p.title,
+      subtitle: p.subtitle,
+      description: p.description,
+      handle: p.handle,
+      is_giftcard: !!p.is_giftcard,
+      discountable: !!p.discountable,
+      status: ProductStatus.PUBLISHED,
+      images: (p.images || []).map((url: string) => ({ url })),
+      options,
+      variants,
+      // Link to default sales channel if available
+      sales_channels: defaultSalesChannel?.length
+        ? [{ id: defaultSalesChannel[0].id }]
+        : [],
+      // type/tags can be added via additional workflows if needed
+    }
+  }
+
+  // Collect products that don't exist yet
+  const productsToCreate: any[] = []
   for (const productData of seedData.products) {
-      const existing = await productService.list({ handle: productData.handle });
-      if (!existing.length) {
-          await productService.create(productData);
-      }
-  }
-  console.log("🌱 Products seeded.");
-  
-  // Seed Users
-  const userService = container.resolve("userService");
-  for (const userData of seedData.users) {
-      const existing = await userService.list({ email: userData.email });
-      if (!existing.length) {
-          await userService.create(userData, userData.password);
-      }
-  }
-  console.log("🌱 Users seeded.");
+    const existingProducts = await productModuleService.listProducts({ handle: productData.handle })
 
-  console.log("✅ Data seeding complete!");
+    if (!existingProducts?.length) {
+      productsToCreate.push(toWorkflowProduct(productData))
+    }
+  }
+
+  if (productsToCreate.length) {
+    await createProductsWorkflow(container).run({
+      input: { products: productsToCreate },
+    })
+    logger.info(`Created ${productsToCreate.length} product(s).`)
+  }
+  logger.info("🌱 Products seeded.")
+
+  // Seed Users (best-effort): APIs vary; skip gracefully if not supported
+  try {
+    const userService: any = container.resolve("user")
+    for (const userData of seedData.users) {
+      let existing: any[] = []
+      if (typeof userService.listUsers === "function") {
+        existing = await userService.listUsers({ email: userData.email })
+      } else if (typeof userService.list === "function") {
+        existing = await userService.list({ email: userData.email })
+      }
+
+      if (!existing?.length) {
+        if (typeof userService.createUsers === "function") {
+          await userService.createUsers([
+            {
+              email: userData.email,
+              first_name: userData.first_name,
+              last_name: userData.last_name,
+            },
+          ])
+          logger.info(`Created user: ${userData.email} (password setup may be required)`)        
+        } else {
+          logger.warn("User creation API not available. Skipping user seeding.")
+          break
+        }
+      }
+    }
+    logger.info("🌱 Users seeded (best-effort).")
+  } catch (e) {
+    logger.warn("Skipping user seeding (module not available or incompatible).")
+  }
+
+  logger.info("✅ Data seeding complete!")
 }
