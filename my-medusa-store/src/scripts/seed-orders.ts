@@ -1,4 +1,4 @@
-import { ExecArgs } from "@medusajs/framework/types";
+import type { ExecArgs } from "@medusajs/framework/types";
 import { createOrderWorkflow, createCustomersWorkflow } from "@medusajs/core-flows";
 // Use core-flows for payment/fulfillment helpers
 import {

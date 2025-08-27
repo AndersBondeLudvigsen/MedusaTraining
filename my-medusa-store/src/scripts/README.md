@@ -47,7 +47,7 @@ Your script can accept arguments from the command line. Arguments are passed to 
 For example:
 
 ```ts
-import { ExecArgs } from "@medusajs/framework/types"
+import type { ExecArgs } from "@medusajs/framework/types"
 
 export default async function myScript ({
   args

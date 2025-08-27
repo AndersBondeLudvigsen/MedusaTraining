@@ -1,6 +1,6 @@
 // src/scripts/seed-data.ts — v2-compatible seeder (regions + products)
 
-import { ExecArgs } from "@medusajs/framework/types"
+import type { ExecArgs } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/framework/utils"
 import { createRegionsWorkflow, createProductsWorkflow } from "@medusajs/medusa/core-flows"
 
