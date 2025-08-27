@@ -1376,6 +1376,11 @@
   dependencies:
     tslib "2"
 
+"@google/generative-ai@^0.24.1":
+  version "0.24.1"
+  resolved "https://registry.npmjs.org/@google/generative-ai/-/generative-ai-0.24.1.tgz"
+  integrity sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q==
+
 "@graphql-codegen/core@^4.0.2":
   version "4.0.2"
   resolved "https://registry.npmjs.org/@graphql-codegen/core/-/core-4.0.2.tgz"

@@ -15,7 +15,7 @@
   "scripts": {
     "build": "medusa build",
     "seed": "medusa exec ./src/scripts/seed.ts",
-  "seed:customer-groups": "medusa exec ./src/scripts/seed-customer-groups.ts",
+    "seed:customer-groups": "medusa exec ./src/scripts/seed-customer-groups.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "migrate": "medusa db:migrate",
@@ -24,6 +24,7 @@
     "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@medusajs/admin-sdk": "2.9.0",
     "@medusajs/cli": "2.9.0",
     "@medusajs/framework": "2.9.0",
