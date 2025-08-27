@@ -36,12 +36,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(500).json({ error: `Failed to load orders: ${e?.message || e}`, answer: "" })
     return
   }
-  // Sort by computed total and limit to 50
-  orders.sort((a, b) => {
-    const totalA = (a.items || []).reduce((sum, item) => sum + (item.total || item.subtotal || (item.unit_price * item.quantity) || 0), 0) + (a.shipping_methods || []).reduce((sum, sm) => sum + (sm.amount || 0), 0);
-    const totalB = (b.items || []).reduce((sum, item) => sum + (item.total || item.subtotal || (item.unit_price * item.quantity) || 0), 0) + (b.shipping_methods || []).reduce((sum, sm) => sum + (sm.amount || 0), 0);
-    return totalB - totalA;
-  });
+  // Sort by total and limit to 50
+  orders.sort((a, b) => (b.total || 0) - (a.total || 0));
   orders = orders.slice(0, 50)
 
   // If no orders, return explicit error (no AI fallback)
@@ -80,7 +76,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
     const shippingMethods: any[] = Array.isArray((o as any).shipping_methods) ? (o as any).shipping_methods : []
     const shippingTotal = shippingMethods.reduce((sum: number, sm: any) => sum + Number(sm?.amount || 0), 0)
-    const computedTotal = itemsTotal + shippingTotal
+    const computedTotal = Number(o.total) > 0 ? Number(o.total) : itemsTotal + shippingTotal;
     if (currency) {
       revenueByCurrency[currency] = (revenueByCurrency[currency] || 0) + computedTotal
     }
