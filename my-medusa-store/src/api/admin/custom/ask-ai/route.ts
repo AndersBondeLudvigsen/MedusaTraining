@@ -74,6 +74,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   // Simple intent detection from the question
   const q = question.toLowerCase()
+  const isLargest =
+    q.includes("største") ||
+    q.includes("størst") ||
+    q.includes("largest") ||
+    q.includes("biggest") ||
+    q.includes("højeste")
   const isBestSelling = q.includes("best") || q.includes("bedst") || q.includes("sælgende") || q.includes("topseller")
   const isRevenue = q.includes("revenue") || q.includes("omsætning") || q.includes("oms")
   const isAvg = q.includes("average") || q.includes("gennemsnit") || q.includes("avg")
@@ -85,7 +91,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   let answer = ""
-  if (isBestSelling) {
+  if (isLargest) {
+    if (!orders.length) {
+      answer = "Ingen ordrer fundet."
+    } else {
+      const maxOrder = orders.reduce((max: any, o: any) => (Number(o?.total || 0) > Number(max?.total || 0) ? o : max), orders[0])
+      const amt = Number(maxOrder?.total || 0)
+      const currency = (maxOrder?.currency_code || '').toUpperCase()
+      const when = maxOrder?.created_at ? new Date(maxOrder.created_at).toLocaleString() : "ukendt tidspunkt"
+      answer = `Den største ordre (seneste ${totalOrders} ordre) er ${maxOrder?.id || "(uden id)"} på ${(amt / 100).toFixed(2)} ${currency} fra ${when}.`
+    }
+  } else if (isBestSelling) {
     const top = Array.from(productStats.entries()).sort((a, b) => b[1].qty - a[1].qty)[0]
     if (top) {
       answer = `Bedst sælgende produkt i de seneste ${totalOrders} ordre: ${top[0]} (${top[1].qty} stk).`
