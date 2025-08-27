@@ -1,5 +1,6 @@
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
+import { GoogleGenerativeAI } from "@google/generative-ai"
 
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const body = req.body as any
@@ -15,7 +16,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   try {
     const result = (await query.graph({
       entity: "order",
-      // We’ll fetch needed fields; we'll sort client-side and take 50
       fields: [
         "id",
         "created_at",
@@ -30,104 +30,61 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     })) as { data: any[] }
     orders = Array.isArray(result?.data) ? result.data : []
   } catch (e: any) {
-    res.status(500).json({
-      error: `Failed to load orders: ${e?.message || e}`,
-      answer: "",
-    })
+    res.status(500).json({ error: `Failed to load orders: ${e?.message || e}`, answer: "" })
     return
   }
-
   // Sort newest first and limit to 50
   orders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   orders = orders.slice(0, 50)
 
-  // Build product stats by title
-  type Stat = { qty: number; revenueByCurrency: Record<string, number> }
-  const productStats = new Map<string, Stat>()
-  let totalRevenueByCurrency: Record<string, number> = {}
-  let totalOrders = orders.length
-  let totalOrderValueByCurrency: Record<string, number> = {}
-
-  for (const order of orders) {
-    const currency = order?.currency_code || ""
-    const total = Number(order?.total || 0)
-    if (currency) {
-      totalRevenueByCurrency[currency] = (totalRevenueByCurrency[currency] || 0) + total
-      totalOrderValueByCurrency[currency] = (totalOrderValueByCurrency[currency] || 0) + total
-    }
-    const items: any[] = Array.isArray(order?.items) ? order.items : []
-    for (const it of items) {
-      const title = it?.title || it?.variant?.product?.title || "(ukendt produkt)"
-      const qty = Number(it?.quantity || 0)
-      const unitPrice = Number(it?.unit_price || 0)
-      let stat = productStats.get(title)
-      if (!stat) {
-        stat = { qty: 0, revenueByCurrency: {} }
-        productStats.set(title, stat)
-      }
-      stat.qty += qty
-      if (currency) {
-        stat.revenueByCurrency[currency] = (stat.revenueByCurrency[currency] || 0) + unitPrice * qty
-      }
-    }
+  // If no orders, return explicit error (no AI fallback)
+  if (!orders.length) {
+    res.status(404).json({ error: "Ingen ordrer fundet." })
+    return
   }
 
-  // Simple intent detection from the question
-  const q = question.toLowerCase()
-  const isLargest =
-    q.includes("største") ||
-    q.includes("størst") ||
-    q.includes("largest") ||
-    q.includes("biggest") ||
-    q.includes("højeste")
-  const isBestSelling = q.includes("best") || q.includes("bedst") || q.includes("sælgende") || q.includes("topseller")
-  const isRevenue = q.includes("revenue") || q.includes("omsætning") || q.includes("oms")
-  const isAvg = q.includes("average") || q.includes("gennemsnit") || q.includes("avg")
-  const isCount = q.includes("count") || q.includes("antal") || q.includes("orders")
+  // Build context lines with a computed total from items + shipping
+  const lines = orders.map((o: any) => {
+    const currency = String(o?.currency_code || '').toUpperCase()
+    const items = Array.isArray(o?.items) ? o.items : []
+    const itemsTotal = items.reduce((sum: number, it: any) => sum + Number(it?.unit_price || 0) * Number(it?.quantity || 0), 0)
+    const shippingMethods: any[] = Array.isArray((o as any).shipping_methods) ? (o as any).shipping_methods : []
+    const shippingTotal = shippingMethods.reduce((sum: number, sm: any) => sum + Number(sm?.amount || 0), 0)
+    const computedTotal = itemsTotal + shippingTotal
+    const date = o?.created_at ? new Date(o.created_at).toISOString().split('T')[0] : ''
+    const itemStr = items.map((it: any) => `${it.title} x${it.quantity} @ ${(Number(it.unit_price||0)/100).toFixed(2)} ${currency}`).join(', ')
+    return {
+      id: o.id,
+      currency,
+      computed_total_cents: computedTotal,
+      computed_total: `${(computedTotal/100).toFixed(2)} ${currency}`,
+      date,
+      items: itemStr,
+    }
+  })
 
-  function formatCurrencyMap(m: Record<string, number>): string {
-    const parts = Object.entries(m).map(([ccy, amt]) => `${(amt / 100).toFixed(2)} ${ccy.toUpperCase()}`)
-    return parts.join(", ") || "0"
+  // Prepare Gemini prompt that explicitly instructs to use computed_total
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
+  if (!apiKey) {
+    res.status(500).json({ error: "Mangler GEMINI_API_KEY/GOOGLE_API_KEY miljøvariabel." })
+    return
   }
 
-  let answer = ""
-  if (isLargest) {
-    if (!orders.length) {
-      answer = "Ingen ordrer fundet."
-    } else {
-      const maxOrder = orders.reduce((max: any, o: any) => (Number(o?.total || 0) > Number(max?.total || 0) ? o : max), orders[0])
-      const amt = Number(maxOrder?.total || 0)
-      const currency = (maxOrder?.currency_code || '').toUpperCase()
-      const when = maxOrder?.created_at ? new Date(maxOrder.created_at).toLocaleString() : "ukendt tidspunkt"
-      answer = `Den største ordre (seneste ${totalOrders} ordre) er ${maxOrder?.id || "(uden id)"} på ${(amt / 100).toFixed(2)} ${currency} fra ${when}.`
-    }
-  } else if (isBestSelling) {
-    const top = Array.from(productStats.entries()).sort((a, b) => b[1].qty - a[1].qty)[0]
-    if (top) {
-      answer = `Bedst sælgende produkt i de seneste ${totalOrders} ordre: ${top[0]} (${top[1].qty} stk).`
-    } else {
-      answer = "Ingen ordrer fundet."
-    }
-  } else if (isRevenue) {
-    answer = `Samlet omsætning for de seneste ${totalOrders} ordre: ${formatCurrencyMap(totalRevenueByCurrency)}`
-  } else if (isAvg) {
-    const avgByCurrency: Record<string, number> = {}
-    for (const [ccy, sum] of Object.entries(totalOrderValueByCurrency)) {
-      avgByCurrency[ccy] = sum / Math.max(1, totalOrders)
-    }
-    answer = `Gennemsnitlig ordreværdi (seneste ${totalOrders} ordre): ${formatCurrencyMap(avgByCurrency)}`
-  } else if (isCount) {
-    answer = `Antal ordrer analyseret: ${totalOrders}`
-  } else {
-    // Default: top 3 products by quantity
-    const top3 = Array.from(productStats.entries())
-      .sort((a, b) => b[1].qty - a[1].qty)
-      .slice(0, 3)
-      .map(([title, stat]) => `${title} (${stat.qty})`)
-    answer = top3.length
-      ? `Top 3 produkter (seneste ${totalOrders} ordre): ${top3.join(", ")}`
-      : "Ingen ordrer fundet."
-  }
+  const table = lines.map(l => `- ${l.id} | ${l.date} | ${l.computed_total} | ${l.items}`).join('\n')
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
+  const prompt = `Du er en hjælpsom AI-assistent for en Medusa-butik. Brug KUN de beregnede totaler nedenfor (computed_total) til at besvare spørgsmålet. Svar kort og præcist på dansk.\n\nBrugerens spørgsmål:\n${question}\n\nSeneste ${lines.length} ordrer (id | dato | computed_total | items):\n${table}\n\nReturnér kun svaret, uden ekstra forklaring.`
 
-  res.json({ answer })
+  try {
+    const result = await model.generateContent(prompt)
+    const text = result?.response?.text?.() || ""
+    const answer = text.trim()
+    if (!answer) {
+      res.status(502).json({ error: "Tomt AI-svar." })
+      return
+    }
+    res.json({ answer })
+  } catch (e: any) {
+    res.status(502).json({ error: `Kunne ikke hente AI-svar: ${e?.message || e}` })
+  }
 }
