@@ -15,6 +15,7 @@
   "scripts": {
     "build": "medusa build",
     "seed": "medusa exec ./src/scripts/seed.ts",
+  "seed:customer-groups": "medusa exec ./src/scripts/seed-customer-groups.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "migrate": "medusa db:migrate",
