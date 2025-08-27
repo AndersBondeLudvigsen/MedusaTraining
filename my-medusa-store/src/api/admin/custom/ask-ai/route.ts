@@ -20,12 +20,15 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         "id",
         "created_at",
         "currency_code",
-        "total",
+  "total",
         "items.title",
         "items.quantity",
         "items.unit_price",
+  "items.total",
+  "items.subtotal",
         "items.variant_id",
         "items.variant.product.title",
+  "shipping_methods.amount",
       ],
     })) as { data: any[] }
     orders = Array.isArray(result?.data) ? result.data : []
@@ -33,8 +36,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(500).json({ error: `Failed to load orders: ${e?.message || e}`, answer: "" })
     return
   }
-  // Sort newest first and limit to 50
-  orders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  // Sort by computed total and limit to 50
+  orders.sort((a, b) => {
+    const totalA = (a.items || []).reduce((sum, item) => sum + (item.total || item.subtotal || (item.unit_price * item.quantity) || 0), 0) + (a.shipping_methods || []).reduce((sum, sm) => sum + (sm.amount || 0), 0);
+    const totalB = (b.items || []).reduce((sum, item) => sum + (item.total || item.subtotal || (item.unit_price * item.quantity) || 0), 0) + (b.shipping_methods || []).reduce((sum, sm) => sum + (sm.amount || 0), 0);
+    return totalB - totalA;
+  });
   orders = orders.slice(0, 50)
 
   // If no orders, return explicit error (no AI fallback)
@@ -44,15 +51,49 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   // Build context lines with a computed total from items + shipping
+  const productQty = new Map<string, number>()
+  const productRevenueByCurrency = new Map<string, Map<string, number>>() // title -> (ccy -> cents)
+  const revenueByCurrency: Record<string, number> = {}
   const lines = orders.map((o: any) => {
     const currency = String(o?.currency_code || '').toUpperCase()
     const items = Array.isArray(o?.items) ? o.items : []
-    const itemsTotal = items.reduce((sum: number, it: any) => sum + Number(it?.unit_price || 0) * Number(it?.quantity || 0), 0)
+    let itemsTotal = 0
+    for (const it of items) {
+      const qty = Number(it?.quantity || 0)
+      const unit = Number((it as any)?.unit_price)
+      const lineTotalCandidate = Number((it as any)?.total ?? (it as any)?.subtotal)
+      const lineTotal = Number.isFinite(lineTotalCandidate) && lineTotalCandidate > 0
+        ? lineTotalCandidate
+        : (Number.isFinite(unit) && unit > 0 ? unit * qty : 0)
+      itemsTotal += lineTotal
+
+      const title = it?.title || it?.variant?.product?.title || "(ukendt produkt)"
+      productQty.set(title, (productQty.get(title) || 0) + qty)
+      if (currency) {
+        let byCcy = productRevenueByCurrency.get(title)
+        if (!byCcy) {
+          byCcy = new Map<string, number>()
+          productRevenueByCurrency.set(title, byCcy)
+        }
+        byCcy.set(currency, (byCcy.get(currency) || 0) + lineTotal)
+      }
+    }
     const shippingMethods: any[] = Array.isArray((o as any).shipping_methods) ? (o as any).shipping_methods : []
     const shippingTotal = shippingMethods.reduce((sum: number, sm: any) => sum + Number(sm?.amount || 0), 0)
     const computedTotal = itemsTotal + shippingTotal
+    if (currency) {
+      revenueByCurrency[currency] = (revenueByCurrency[currency] || 0) + computedTotal
+    }
     const date = o?.created_at ? new Date(o.created_at).toISOString().split('T')[0] : ''
-    const itemStr = items.map((it: any) => `${it.title} x${it.quantity} @ ${(Number(it.unit_price||0)/100).toFixed(2)} ${currency}`).join(', ')
+    const itemStr = items.map((it: any) => {
+      const qty = Number(it?.quantity || 0)
+      const unit = Number((it as any)?.unit_price)
+      const lineTotalCandidate = Number((it as any)?.total ?? (it as any)?.subtotal)
+      const lineTotal = Number.isFinite(lineTotalCandidate) && lineTotalCandidate > 0
+        ? lineTotalCandidate
+        : (Number.isFinite(unit) && unit > 0 ? unit * qty : 0)
+      return `${it.title} x${qty} = ${(lineTotal/100).toFixed(2)} ${currency}`
+    }).join(', ')
     return {
       id: o.id,
       currency,
@@ -62,6 +103,16 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       items: itemStr,
     }
   })
+
+  // Build a compact product summary to guide the model
+  const topQty = Array.from(productQty.entries()).sort((a,b) => b[1]-a[1]).slice(0, 5)
+  const prodSummary = topQty.map(([title]) => {
+    const qty = productQty.get(title) || 0
+    const revMap = productRevenueByCurrency.get(title) || new Map<string, number>()
+    const revStr = Array.from(revMap.entries()).map(([ccy, cents]) => `${(cents/100).toFixed(2)} ${ccy}`).join(', ')
+    return `• ${title}: ${qty} stk, omsætning ${revStr || '0.00'}`
+  }).join('\n')
+  const revenueStr = Object.entries(revenueByCurrency).map(([ccy, cents]) => `${(cents/100).toFixed(2)} ${ccy}`).join(', ')
 
   // Prepare Gemini prompt that explicitly instructs to use computed_total
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
@@ -73,7 +124,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const table = lines.map(l => `- ${l.id} | ${l.date} | ${l.computed_total} | ${l.items}`).join('\n')
   const genAI = new GoogleGenerativeAI(apiKey)
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
-  const prompt = `Du er en hjælpsom AI-assistent for en Medusa-butik. Brug KUN de beregnede totaler nedenfor (computed_total) til at besvare spørgsmålet. Svar kort og præcist på dansk.\n\nBrugerens spørgsmål:\n${question}\n\nSeneste ${lines.length} ordrer (id | dato | computed_total | items):\n${table}\n\nReturnér kun svaret, uden ekstra forklaring.`
+  const prompt = `Du er en hjælpsom AI-assistent for en Medusa-butik. Brug KUN de beregnede totaler nedenfor (computed_total) og produktopsummeringen til at besvare spørgsmålet. Svar kort og præcist på dansk.\n\nBrugerens spørgsmål:\n${question}\n\nAggregeret opsummering (seneste ${lines.length} ordrer):\nTotal omsætning: ${revenueStr}\nTop produkter (antal og omsætning):\n${prodSummary}\n\nSeneste ${lines.length} ordrer (id | dato | computed_total | items):\n${table}\n\nReturnér kun svaret, uden ekstra forklaring.`
 
   try {
     const result = await model.generateContent(prompt)

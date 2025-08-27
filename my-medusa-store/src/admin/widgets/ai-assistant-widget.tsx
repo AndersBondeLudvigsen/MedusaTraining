@@ -53,7 +53,13 @@ const AIAssistantWidget = () => {
         </Button>
       </div>
 
-      {answer && (
+      {isLoading && (
+        <div className="mt-4 p-4 bg-grey-5 rounded-lg">
+          <Text>Tænker...</Text>
+        </div>
+      )}
+
+      {answer && !isLoading && (
         <div className="mt-4 p-4 bg-grey-5 rounded-lg">
           <Text weight="plus">Svar:</Text>
           <Text>{answer}</Text>
