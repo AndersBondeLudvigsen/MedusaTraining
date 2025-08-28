@@ -54,7 +54,14 @@ export async function connectMcp(): Promise<McpSession> {
   }
   const { McpClient, StdioClientTransport } = await loadSdk()
   const { command, args } = parseCommand(bin)
-  const transport = new StdioClientTransport({ command, args })
+
+  console.log("Spawning MCP with:", command, args);
+
+  
+  const transport = new StdioClientTransport({ 
+    command, 
+    args
+  })
   const client = new McpClient({ name: "medusa-ask-ai", version: "0.1.0" })
   await client.connect(transport)
 
@@ -67,6 +74,7 @@ export async function connectMcp(): Promise<McpSession> {
   }
 
   return { client, transport, dispose }
+  
 }
 
 export async function callTool(session: McpSession, name: string, input: any) {

@@ -152,38 +152,68 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
     // Connect to medusa-mcp via stdio
     const session = await connectMcp()
     try {
-      // Try to discover a products list tool and call it with a basic query
+      // Discover tools once
       // @ts-ignore - SDK types may vary; using any-safe call
-      const toolsList: any = await (session.client as any).listTools?.() || { tools: [] }
+      const toolsList: any = (await (session.client as any).listTools?.()) || { tools: [] }
       const tools: any[] = toolsList.tools || []
-      const prodTool = tools.find((x) => /product/i.test(x.name) && /list|get/i.test(x.name)) || tools.find((x) => /products/i.test(x.name))
+      const toolNames = tools.map((x) => x.name)
 
-      if (/products?\s+(containing|with)\s+([\w-]+)/.test(t) && prodTool) {
-        const term = t.match(/products?\s+(containing|with)\s+([\w-]+)/)![2]
-        const { text } = await callTool(session, prodTool.name, { q: term })
-        const answer = text || `Listed products for query: ${term}`
-        return res.status(200).json({ answer, meta: { intent: "mcp.products.search", tool: prodTool.name } })
+      // Prefer a search tool if present, otherwise a list tool
+      const searchTool = tools.find((x) => /product/i.test(x.name) && /search|find|query/i.test(x.name))
+      const listTool = tools.find((x) => /product/i.test(x.name) && /list|get/i.test(x.name)) || tools.find((x) => /products/i.test(x.name))
+
+      // Extract a search term from common phrasings
+      const termMatch =
+        t.match(/products?\s+(?:with|containing)\s+"?([\w-\s]+)"?/) ||
+        t.match(/title\s*(?:contains|containing|with)\s+"?([\w-\s]+)"?/) ||
+        t.match(/name\s*(?:contains|containing|with)\s+"?([\w-\s]+)"?/)
+      const term = termMatch?.[1]?.trim()
+
+      if (term && (searchTool || listTool)) {
+        const toolToUse = searchTool || listTool!
+        // try common arg names
+        let answerText = ""
+        let lastErr: any
+        for (const args of [{ q: term }, { query: term }, { title: term }, { search: term }]) {
+          try {
+            const { text } = await callTool(session, toolToUse.name, args)
+            answerText = text
+            lastErr = undefined
+            break
+          } catch (e) {
+            lastErr = e
+          }
+        }
+        if (lastErr) {
+          // final fallback: try without params
+          const { text } = await callTool(session, toolToUse.name, {})
+          const answer = text || `Listed products (fallback, no filter).`
+          return res.status(200).json({ answer, meta: { intent: "mcp.products.search", tool: toolToUse.name, tools: toolNames } })
+        }
+        const answer = answerText || `Listed products for query: ${term}`
+        return res.status(200).json({ answer, meta: { intent: "mcp.products.search", tool: toolToUse.name, tools: toolNames } })
       }
 
-      // As a generic example, if user says 'list products', call the tool without params
-      if (/list\s+products/.test(t) && prodTool) {
-        const { text } = await callTool(session, prodTool.name, {})
+      // As a generic example, if user says 'list products', call the list tool without params
+      if (/\blist\s+products\b/.test(t) && listTool) {
+        const { text } = await callTool(session, listTool.name, {})
         const answer = text || `Listed products.`
-        return res.status(200).json({ answer, meta: { intent: "mcp.products.list", tool: prodTool.name } })
+        return res.status(200).json({ answer, meta: { intent: "mcp.products.list", tool: listTool.name, tools: toolNames } })
       }
 
       return res.status(200).json({
         answer: "Fortæl mig hvad du ønsker fra Medusa (fx 'list products with shirt'). Jeg kan også udvide med flere værktøjer.",
-        meta: { intent: "mcp.unsupported" },
+        meta: { intent: "mcp.unsupported", tools: toolNames },
       })
     } finally {
       await session.dispose()
     }
   } catch (e: any) {
-    return res.status(500).json({
-      answer: "MCP-forespørgsel mislykkedes. Tjek at medusa-mcp kan startes fra MCP_BIN.",
+    // Return 200 so the UI can display the error details instead of a generic failure banner
+    return res.status(200).json({
+      answer: "Kunne ikke fuldføre MCP-forespørgslen. Tjek opsætningen nedenfor.",
       error: e?.message || String(e),
-      meta: { intent: "mcp.error" },
+      meta: { intent: "mcp.error", hint: "Sørg for at MCP_BIN er sat og at medusa-mcp kan logge ind i din backend." },
     })
   }
 }

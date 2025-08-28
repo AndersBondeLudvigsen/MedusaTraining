@@ -1,7 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { config } from "dotenv";
+import path from "path";
 import MedusaStoreService from "./services/medusa-store";
 import MedusaAdminService from "./services/medusa-admin";
+
+// Load environment variables from the MCP server directory
+// Use the directory where this script is located, not the working directory
+const mcpDir = path.dirname(path.dirname(__filename));
+const envPath = path.join(mcpDir, ".env");
+console.error(`Loading .env from: ${envPath}`);
+config({ path: envPath });
+console.error(`MEDUSA_USERNAME: ${process.env.MEDUSA_USERNAME}`);
+console.error(`MEDUSA_BACKEND_URL: ${process.env.MEDUSA_BACKEND_URL}`);
 
 async function main(): Promise<void> {
     console.error("Starting Medusa Store MCP Server...");
