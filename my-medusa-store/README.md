@@ -1,69 +1,62 @@
-# Medusa Store Backend
+<p align="center">
+  <a href="https://www.medusajs.com">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://user-images.githubusercontent.com/59018053/229103275-b5e482bb-4601-46e6-8142-244f531cebdb.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://user-images.githubusercontent.com/59018053/229103726-e5b529a3-9b3f-4970-8a1f-c6af37f087bf.svg">
+    <img alt="Medusa logo" src="https://user-images.githubusercontent.com/59018053/229103726-e5b529a3-9b3f-4970-8a1f-c6af37f087bf.svg">
+    </picture>
+  </a>
+</p>
+<h1 align="center">
+  Medusa
+</h1>
 
-This is the backend for the Medusa e-commerce store.
+<h4 align="center">
+  <a href="https://docs.medusajs.com">Documentation</a> |
+  <a href="https://www.medusajs.com">Website</a>
+</h4>
 
-## Prerequisites
+<p align="center">
+  Building blocks for digital commerce
+</p>
+<p align="center">
+  <a href="https://github.com/medusajs/medusa/blob/master/CONTRIBUTING.md">
+    <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat" alt="PRs welcome!" />
+  </a>
+    <a href="https://www.producthunt.com/posts/medusa"><img src="https://img.shields.io/badge/Product%20Hunt-%231%20Product%20of%20the%20Day-%23DA552E" alt="Product Hunt"></a>
+  <a href="https://discord.gg/xpCwq3Kfn8">
+    <img src="https://img.shields.io/badge/chat-on%20discord-7289DA.svg" alt="Discord Chat" />
+  </a>
+  <a href="https://twitter.com/intent/follow?screen_name=medusajs">
+    <img src="https://img.shields.io/twitter/follow/medusajs.svg?label=Follow%20@medusajs" alt="Follow @medusajs" />
+  </a>
+</p>
 
-- Node.js (v20 or later)
-- Docker and Docker Compose
+## Compatibility
+
+This starter is compatible with versions >= 2 of `@medusajs/medusa`. 
 
 ## Getting Started
 
-1.  **Clone the repository**
+Visit the [Quickstart Guide](https://docs.medusajs.com/learn/installation) to set up a server.
 
-2.  **Navigate to the store directory:**
-    ```bash
-    cd my-medusa-store
-    ```
+Visit the [Docs](https://docs.medusajs.com/learn/installation#get-started) to learn more about our system requirements.
 
-3.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
+## What is Medusa
 
-4.  **Set up environment variables:**
+Medusa is a set of commerce modules and tools that allow you to build rich, reliable, and performant commerce applications without reinventing core commerce logic. The modules can be customized and used to build advanced ecommerce stores, marketplaces, or any product that needs foundational commerce primitives. All modules are open-source and freely available on npm.
 
-    Create a `.env` file by copying the template:
-    ```bash
-    copy .env.template .env
-    ```
+Learn more about [Medusa’s architecture](https://docs.medusajs.com/learn/introduction/architecture) and [commerce modules](https://docs.medusajs.com/learn/fundamentals/modules/commerce-modules) in the Docs.
 
-    Update the `DATABASE_URL` in the `.env` file to:
-    ```
-    DATABASE_URL=postgres://medusa_user:medusa_pass@localhost:5432/medusa_db
-    ```
+## Community & Contributions
 
-5.  **Start the database:**
+The community and core team are available in [GitHub Discussions](https://github.com/medusajs/medusa/discussions), where you can ask for support, discuss roadmap, and share ideas.
 
-    From the root of the `MedusaTraining` directory, run:
-    ```bash
-    docker-compose up -d
-    ```
+Join our [Discord server](https://discord.com/invite/medusajs) to meet other community members.
 
-6.  **Run database migrations:**
+## Other channels
 
-    In the `my-medusa-store` directory, run:
-    ```bash
-    npm run migrate
-    ```
-
-7.  **Seed the database:**
-
-    To populate the database with sample products and data, run:
-    ```bash
-    npm run seed
-    ```
-
-7.1  **Seed the database:**
-
-    To populate the database with more sample products and data, run:
-    ```bash
-    npx medusa exec ./src/scripts/seed-data.ts
-    ```
-
-8.  **Start the development server:**
-    ```bash
-    npm run dev
-    ```
-
-The Medusa backend should now be running on `http://localhost:9000`.
+- [GitHub Issues](https://github.com/medusajs/medusa/issues)
+- [Twitter](https://twitter.com/medusajs)
+- [LinkedIn](https://www.linkedin.com/company/medusajs)
+- [Medusa Blog](https://medusajs.com/blog/)
