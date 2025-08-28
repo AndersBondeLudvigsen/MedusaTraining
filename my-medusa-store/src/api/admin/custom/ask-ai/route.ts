@@ -1,7 +1,8 @@
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { Modules } from "@medusajs/framework/utils"
 import type { IOrderModuleService } from "@medusajs/types"
-import { countOrdersInRange } from "../../../../lib/order-analytics"
+import { countOrdersInRange, topProductsByQuantity } from "../../../../lib/order-analytics"
+import { connectMcp, callTool } from "../../../../lib/mcp/client"
 
 export const AUTHENTICATE = true
 
@@ -116,67 +117,71 @@ export const POST = async (req: MedusaRequest, res: MedusaResponse) => {
     return res.status(200).json({ answer, meta: { intent: "orders.count", range: { from: rng.from, to: rng.to }, count } })
   }
 
-  // Fallback: call MCP agent with a minimal tool manifest.
-  const mcpUrl = process.env.MCP_SERVER_URL
-  const mcpToken = process.env.MCP_SERVER_TOKEN
-  const toolSecret = process.env.MCP_TOOL_SECRET
-
-  if (!mcpUrl || !mcpToken || !toolSecret) {
+  // Single-process MCP client approach: spawn/connect to medusa-mcp via stdio and call tools directly
+  const mcpBin = process.env.MCP_BIN
+  if (!mcpBin) {
     return res.status(200).json({
-      answer:
-        "AI fallback ikke konfigureret (MCP_SERVER_URL/MCP_SERVER_TOKEN/MCP_TOOL_SECRET mangler). Jeg kan stadig svare på ordretælling.",
-      meta: { intent: "fallback.local" },
+      answer: "MCP_BIN mangler. Sæt MCP_BIN til din medusa-mcp entry (node \\path\\to\\dist\\index.js).",
+      meta: { intent: "mcp.missing_bin" },
     })
   }
 
+  // Heuristics for a small demo:
+  // - If question mentions listing/finding products with a term, use a store products list tool.
+  // - Otherwise, fall back to a friendly message.
+  const t = question.toLowerCase()
   try {
-  const publicBase = process.env.MEDUSA_PUBLIC_URL || `${req.protocol}://${req.get("host")}`
-  const toolSpec = {
-      name: "count_orders",
-      description: "Return the order count for a given time range.",
-      parameters: {
-        type: "object",
-        properties: {
-          last: { type: "string", description: "Duration like 7d, 24h" },
-          from: { type: "string", description: "ISO date" },
-          to: { type: "string", description: "ISO date" },
-        },
-      },
-      // The AI will call this URL; prefer a public base if configured
-      invocation: {
-        method: "POST",
-        url: `${publicBase}/admin/tools/count-orders`,
-        headers: { "X-MCP-Tool-Secret": toolSecret },
-      },
+    // Keep our richer local 'top products' skill available
+    if (/(most\s*sold|best\s*selling|mest\s*solgte|bedst\s*sælgende)/.test(t)) {
+      const now = new Date()
+      const to = now
+      const from = /last\s*month|sidste\s*måned/.test(t)
+        ? new Date(now.getTime() - 30 * 24 * 3600 * 1000)
+        : new Date(now.getTime() - 7 * 24 * 3600 * 1000)
+      const orderService = req.scope.resolve<IOrderModuleService>(Modules.ORDER)
+      const items = await topProductsByQuantity({ orderService, from, to, limit: 5 })
+      if (!items.length) {
+        return res.status(200).json({ answer: "Ingen produkter i perioden." })
+      }
+      const top = items[0]
+      const title = top.title || top.sku || top.variant_id || "Ukendt"
+      const answer = `Mest solgte produkt: ${title} (${top.quantity} stk)`
+      return res.status(200).json({ answer, meta: { intent: "products.top", items } })
     }
 
-    const payload = {
-      question,
-      tools: [toolSpec],
-      // Optionally give some context for better answers
-      system: "You are a helpful commerce analyst. Use tools as needed to answer precisely.",
-    }
+    // Connect to medusa-mcp via stdio
+    const session = await connectMcp()
+    try {
+      // Try to discover a products list tool and call it with a basic query
+      // @ts-ignore - SDK types may vary; using any-safe call
+      const toolsList: any = await (session.client as any).listTools?.() || { tools: [] }
+      const tools: any[] = toolsList.tools || []
+      const prodTool = tools.find((x) => /product/i.test(x.name) && /list|get/i.test(x.name)) || tools.find((x) => /products/i.test(x.name))
 
-    const r = await fetch(`${mcpUrl}/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${mcpToken}`,
-      },
-      body: JSON.stringify(payload),
-    })
+      if (/products?\s+(containing|with)\s+([\w-]+)/.test(t) && prodTool) {
+        const term = t.match(/products?\s+(containing|with)\s+([\w-]+)/)![2]
+        const { text } = await callTool(session, prodTool.name, { q: term })
+        const answer = text || `Listed products for query: ${term}`
+        return res.status(200).json({ answer, meta: { intent: "mcp.products.search", tool: prodTool.name } })
+      }
 
-    if (!r.ok) {
-      const text = await r.text().catch(() => "")
-      throw new Error(text || `MCP responded ${r.status}`)
+      // As a generic example, if user says 'list products', call the tool without params
+      if (/list\s+products/.test(t) && prodTool) {
+        const { text } = await callTool(session, prodTool.name, {})
+        const answer = text || `Listed products.`
+        return res.status(200).json({ answer, meta: { intent: "mcp.products.list", tool: prodTool.name } })
+      }
+
+      return res.status(200).json({
+        answer: "Fortæl mig hvad du ønsker fra Medusa (fx 'list products with shirt'). Jeg kan også udvide med flere værktøjer.",
+        meta: { intent: "mcp.unsupported" },
+      })
+    } finally {
+      await session.dispose()
     }
-    const data = await r.json()
-    // Expecting { answer: string, meta?: any }
-    const answer = data?.answer || ""
-    return res.status(200).json({ answer, meta: { intent: "mcp", raw: data } })
   } catch (e: any) {
     return res.status(500).json({
-      answer: "MCP-forespørgsel mislykkedes. Prøv igen senere.",
+      answer: "MCP-forespørgsel mislykkedes. Tjek at medusa-mcp kan startes fra MCP_BIN.",
       error: e?.message || String(e),
       meta: { intent: "mcp.error" },
     })
