@@ -1,9 +1,27 @@
-import { McpClient } from "@modelcontextprotocol/sdk/client/mcp.js"
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+// Lazy-load the MCP SDK at runtime to avoid startup failures if not installed yet
+type SDK = {
+  McpClient: new (info: { name: string; version: string }) => any
+  StdioClientTransport: new (opts: { command: string; args?: string[] }) => any
+}
+
+async function loadSdk(): Promise<SDK> {
+  try {
+    // CommonJS resolution
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mcp = require("@modelcontextprotocol/sdk/client/mcp.js")
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const stdio = require("@modelcontextprotocol/sdk/client/stdio.js")
+    return { McpClient: mcp.McpClient, StdioClientTransport: stdio.StdioClientTransport }
+  } catch (e) {
+    throw new Error(
+      "@modelcontextprotocol/sdk is not installed. Please run `npm install @modelcontextprotocol/sdk --save` in my-medusa-store."
+    )
+  }
+}
 
 export type McpSession = {
-  client: McpClient
-  transport: StdioClientTransport
+  client: any
+  transport: any
   dispose: () => Promise<void>
 }
 
@@ -34,6 +52,7 @@ export async function connectMcp(): Promise<McpSession> {
   if (!bin) {
     throw new Error("MCP_BIN is not set")
   }
+  const { McpClient, StdioClientTransport } = await loadSdk()
   const { command, args } = parseCommand(bin)
   const transport = new StdioClientTransport({ command, args })
   const client = new McpClient({ name: "medusa-ask-ai", version: "0.1.0" })
