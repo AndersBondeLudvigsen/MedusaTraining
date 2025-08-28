@@ -1,4 +1,4 @@
-import type { ExecArgs, CreateInventoryLevelInput } from "@medusajs/framework/types";
+import { CreateInventoryLevelInput, ExecArgs } from "@medusajs/framework/types";
 import {
   ContainerRegistrationKeys,
   Modules,
