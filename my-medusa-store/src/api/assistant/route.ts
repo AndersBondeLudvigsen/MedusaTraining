@@ -21,7 +21,7 @@ async function selectToolWithGemini(
   userPrompt: string,
   tools: McpTool[],
   hints?: Record<string, any>,
-  modelName = "gemini-2.5-flash"
+  modelName = "gemini-1.5-flash"
 ): Promise<{ name?: string; args?: Record<string, any>; raw?: any }> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) {
@@ -45,9 +45,6 @@ async function selectToolWithGemini(
     `Rules:\n` +
     `- name must be one of the tool names in the catalog.\n` +
     `- args must follow the tool's input JSON schema (field names and types).\n` +
-    `- Prefer Admin* tools for any action that creates, updates, deletes, or manages resources (e.g., customers, products, orders).\n` +
-    `- Use Store tools for public storefront or end-customer self-service flows (browse catalog, carts/checkout, customer self sign-up/login).\n` +
-    `- If the prompt is ambiguous but involves creating or modifying entities (e.g., "create customer"), default to Admin*.\n` +
     `- If unsure, pick the most relevant tool and provide minimal sensible args.\n` +
     `- Do not include code fences unless asked (but if you do, it's okay—we'll strip them).`;
 
@@ -84,7 +81,7 @@ async function naturalLanguageAnswerWithGemini(
   selectedTool: string,
   toolArgs: Record<string, any>,
   toolResult: any,
-  modelName = "gemini-2.5-flash"
+  modelName = "gemini-1.5-flash"
 ): Promise<string> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
@@ -150,7 +147,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const toolText = textParts.length ? textParts.join("\n\n") : undefined;
 
     // Produce a natural-language answer via Gemini
-    const modelName = env("GEMINI_MODEL") || "gemini-2.5-flash";
+    const modelName = env("GEMINI_MODEL") || "gemini-1.5-flash";
     const answer = await naturalLanguageAnswerWithGemini(
       prompt || "",
       toolName,
