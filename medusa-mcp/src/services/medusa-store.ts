@@ -4,7 +4,6 @@ import { z, ZodTypeAny } from "zod";
 import storeJson from "../oas/store.json";
 import { SdkRequestType, StoreJson, Parameter } from "../types/store-json";
 import { defineTool, InferToolHandlerInput } from "../utils/define-tools";
-import { StoreProductListResponse } from "@medusajs/types";
 
 config();
 
