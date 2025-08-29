@@ -1,9 +1,8 @@
-// Use CJS deep imports for reliable runtime resolution
-// Types are intentionally loose to avoid TS subpath export issues
+// Use package exported subpaths; resolves to CJS under require per package exports
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { Client } = require("@modelcontextprotocol/sdk/dist/cjs/client/index.js");
+const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { StdioClientTransport } = require("@modelcontextprotocol/sdk/dist/cjs/client/stdio.js");
+const { StdioClientTransport } = require("@modelcontextprotocol/sdk/client/stdio.js");
 
 export type McpClientOptions = {
   /** Absolute path to Node executable, defaults to `process.execPath` */
