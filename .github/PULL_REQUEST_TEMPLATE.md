@@ -9,9 +9,6 @@
 
 Please provide a summary of the change and explain what problem it solves. Include any relevant motivation and context.
 
-**Related Issue:**  
-If applicable, please reference the issue number that this pull request fixes:  
-Fixes #[issue-number]
 
 # Type of Change
 
