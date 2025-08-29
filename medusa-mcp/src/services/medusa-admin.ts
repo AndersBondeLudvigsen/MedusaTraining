@@ -95,22 +95,45 @@ export default class MedusaAdminService {
                 handler: async (
                     input: InferToolHandlerInput<any, ZodTypeAny>
                 ): Promise<any> => {
-                    const query = new URLSearchParams(input);
-                    const body = Object.entries(input).reduce(
-                        (acc, [key, value]) => {
-                            if (
-                                parameters.find(
-                                    (p) => p.name === key && p.in === "body"
-                                )
-                            ) {
-                                acc[key] = value;
-                            }
-                            return acc;
-                        },
-                        {} as Record<string, any>
-                    );
+                    // Separate params by location
+                    const pathParams = parameters.filter((p) => p.in === "path").map((p) => p.name);
+                    const bodyParamNames = parameters.filter((p) => p.in === "body").map((p) => p.name);
+
+                    // Build final path by replacing {param} occurrences
+                    let finalPath = refPath;
+                    for (const pName of pathParams) {
+                        const val = (input as any)[pName];
+                        if (val === undefined || val === null) continue;
+                        finalPath = finalPath.replace(
+                            new RegExp(`\\{${pName}\\}`, "g"),
+                            encodeURIComponent(String(val))
+                        );
+                    }
+
+                    // Build body from declared body params only
+                    const body = Object.entries(input).reduce((acc, [key, value]) => {
+                        if (bodyParamNames.includes(key)) {
+                            acc[key] = value;
+                        }
+                        return acc;
+                    }, {} as Record<string, any>);
+
+                    // Build query from remaining non-path, non-body values
+                    const queryEntries: [string, string][] = [];
+                    for (const [key, value] of Object.entries(input)) {
+                        if (pathParams.includes(key) || bodyParamNames.includes(key)) continue;
+                        if (value === undefined || value === null) continue;
+                        if (Array.isArray(value)) {
+                            for (const v of value) queryEntries.push([key, String(v)]);
+                        } else if (typeof value === "object") {
+                            queryEntries.push([key, JSON.stringify(value)]);
+                        } else {
+                            queryEntries.push([key, String(value)]);
+                        }
+                    }
+                    const query = new URLSearchParams(queryEntries);
                     if (method === "get") {
-                        const response = await this.sdk.client.fetch(refPath, {
+                        const response = await this.sdk.client.fetch(finalPath, {
                             method: method,
                             headers: {
                                 "Content-Type": "application/json",
@@ -121,7 +144,7 @@ export default class MedusaAdminService {
                         });
                         return response;
                     } else {
-                        const response = await this.sdk.client.fetch(refPath, {
+                        const response = await this.sdk.client.fetch(finalPath, {
                             method: method,
                             headers: {
                                 "Content-Type": "application/json",

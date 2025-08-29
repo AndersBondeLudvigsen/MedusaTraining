@@ -82,25 +82,54 @@ export default class MedusaStoreService {
                 handler: async (
                     input: InferToolHandlerInput<any, ZodTypeAny>
                 ): Promise<any> => {
-                    const query = new URLSearchParams(input);
-                    const body = Object.entries(input).reduce(
-                        (acc, [key, value]) => {
-                            if (
-                                parameters.find(
-                                    (p) => p.name === key && p.in === "body"
-                                )
-                            ) {
-                                acc[key] = value;
+                    // Separate params by location
+                    const pathParams = parameters.filter((p) => p.in === "path").map((p) => p.name);
+                    const bodyParamNames = parameters.filter((p) => p.in === "body").map((p) => p.name);
+
+                    // Build final path by replacing {param} occurrences
+                    let finalPath = refPath;
+                    for (const pName of pathParams) {
+                        const val = (input as any)[pName];
+                        if (val === undefined || val === null) {
+                            // If path param is missing, leave as-is; server may handle error
+                            continue;
+                        }
+                        finalPath = finalPath.replace(
+                            new RegExp(`\\{${pName}\\}`, "g"),
+                            encodeURIComponent(String(val))
+                        );
+                    }
+
+                    // Build body from declared body params only
+                    const body = Object.entries(input).reduce((acc, [key, value]) => {
+                        if (bodyParamNames.includes(key)) {
+                            acc[key] = value;
+                        }
+                        return acc;
+                    }, {} as Record<string, any>);
+
+                    // Build query from remaining non-path, non-body values
+                    const queryEntries: [string, string][] = [];
+                    for (const [key, value] of Object.entries(input)) {
+                        if (pathParams.includes(key) || bodyParamNames.includes(key)) continue;
+                        if (value === undefined || value === null) continue;
+                        if (Array.isArray(value)) {
+                            for (const v of value) {
+                                queryEntries.push([key, String(v)]);
                             }
-                            return acc;
-                        },
-                        {} as Record<string, any>
-                    );
+                        } else if (typeof value === "object") {
+                            // JSON-encode objects in query if needed
+                            queryEntries.push([key, JSON.stringify(value)]);
+                        } else {
+                            queryEntries.push([key, String(value)]);
+                        }
+                    }
+                    const query = new URLSearchParams(queryEntries);
                     if (method === "get") {
                         console.error(
-                            `Fetching ${refPath} with GET ${query.toString()}`
+                            `Fetching ${finalPath} with GET ${query.toString()}`
                         );
-                        const response = await this.sdk.client.fetch(refPath, {
+                        const response = await this.sdk.client.fetch(finalPath, {
                             method: method,
                             headers: {
                                 "Content-Type": "application/json",
@@ -111,7 +140,7 @@ export default class MedusaStoreService {
                         });
                         return response;
                     } else {
-                        const response = await this.sdk.client.fetch(refPath, {
+                        const response = await this.sdk.client.fetch(finalPath, {
                             method: method,
                             headers: {
                                 "Content-Type": "application/json",
