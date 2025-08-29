@@ -21,7 +21,7 @@ async function selectToolWithGemini(
   userPrompt: string,
   tools: McpTool[],
   hints?: Record<string, any>,
-  modelName = "gemini-1.5-flash"
+  modelName = "gemini-2.0-flash"
 ): Promise<{ name?: string; args?: Record<string, any>; raw?: any }> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) {
@@ -81,7 +81,7 @@ async function naturalLanguageAnswerWithGemini(
   selectedTool: string,
   toolArgs: Record<string, any>,
   toolResult: any,
-  modelName = "gemini-1.5-flash"
+  modelName = "gemini-2.0-flash"
 ): Promise<string> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
@@ -147,7 +147,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const toolText = textParts.length ? textParts.join("\n\n") : undefined;
 
     // Produce a natural-language answer via Gemini
-    const modelName = env("GEMINI_MODEL") || "gemini-1.5-flash";
+    const modelName = env("GEMINI_MODEL") || "gemini-2.0-flash";
     const answer = await naturalLanguageAnswerWithGemini(
       prompt || "",
       toolName,
