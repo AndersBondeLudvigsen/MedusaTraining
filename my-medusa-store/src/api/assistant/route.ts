@@ -76,6 +76,33 @@ async function selectToolWithGemini(
   throw new Error("LLM did not return a valid tool selection");
 }
 
+async function naturalLanguageAnswerWithGemini(
+  userPrompt: string,
+  selectedTool: string,
+  toolArgs: Record<string, any>,
+  toolResult: any,
+  modelName = "gemini-1.5-flash"
+): Promise<string> {
+  const apiKey = env("GEMINI_API_KEY");
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+  const { GoogleGenAI } = await import("@google/genai");
+
+  const ai = new GoogleGenAI({ apiKey });
+  const summaryPrompt = [
+    `You are an assistant that explains structured tool outputs to users in clear, concise natural language.`,
+    `User Prompt: ${userPrompt}`,
+    `Selected Tool: ${selectedTool}`,
+    `Tool Arguments (JSON):\n${JSON.stringify(toolArgs, null, 2)}`,
+    `Tool Result (JSON or text):\n${typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult, null, 2)}`,
+    `Instructions:\n- Provide a short, user-friendly answer based on the tool result.\n- Do NOT output JSON or code.\n- Use plain sentences or bullet points.\n- If there are many items, summarize the key points.`,
+  ].join("\n\n");
+
+  const response = await ai.models.generateContent({ model: modelName, contents: summaryPrompt });
+  const text = response.text ?? "";
+  if (!text) throw new Error("LLM returned empty summary");
+  return text.trim();
+}
+
 /**
  * Simple AI-ish assistant endpoint that forwards a natural language prompt
  * to the MCP server by choosing a tool based on a keyword heuristic.
@@ -113,20 +140,23 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
     const result = await mcp.callTool(toolName, toolArgs);
 
-    // Make a user-friendly answer if possible
-    let answer: string | undefined;
-    const textContent = result.content?.find(c => c.type === "text");
-    if (textContent && "text" in textContent) {
-      answer = textContent.text as string;
-    }
+    // Gather tool text output (if present) to aid summarization
+    const textParts = Array.isArray(result?.content)
+      ? result.content.filter((c: any) => c?.type === "text").map((c: any) => c.text)
+      : [];
+    const toolText = textParts.length ? textParts.join("\n\n") : undefined;
 
-    return res.json({
-      selectedTool: toolName,
-      usedLLM: !body.tool,
+    // Produce a natural-language answer via Gemini
+    const modelName = env("GEMINI_MODEL") || "gemini-1.5-flash";
+    const answer = await naturalLanguageAnswerWithGemini(
+      prompt || "",
+      toolName,
       toolArgs,
-      result,
-      answer: answer ?? "Tool executed successfully.",
-    });
+      toolText ?? result,
+      modelName
+    );
+
+  return res.json({ answer });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message ?? String(e) });
   }
