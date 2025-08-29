@@ -83,8 +83,12 @@ export default class MedusaStoreService {
                     input: InferToolHandlerInput<any, ZodTypeAny>
                 ): Promise<any> => {
                     // Separate params by location
-                    const pathParams = parameters.filter((p) => p.in === "path").map((p) => p.name);
-                    const bodyParamNames = parameters.filter((p) => p.in === "body").map((p) => p.name);
+                    const pathParams = parameters
+                        .filter((p) => p.in === "path")
+                        .map((p) => p.name);
+                    const queryParamNames = parameters
+                        .filter((p) => p.in === "query")
+                        .map((p) => p.name);
 
                     // Build final path by replacing {param} occurrences
                     let finalPath = refPath;
@@ -100,19 +104,36 @@ export default class MedusaStoreService {
                         );
                     }
 
-                    // Build body from declared body params only
-                    const body = Object.entries(input).reduce((acc, [key, value]) => {
-                        if (bodyParamNames.includes(key)) {
+                    // Build body from non-path, non-query inputs (most POST endpoints expect JSON body)
+                    const body = Object.entries(input).reduce(
+                        (acc, [key, value]) => {
+                            if (
+                                pathParams.includes(key) ||
+                                queryParamNames.includes(key)
+                            ) {
+                                return acc;
+                            }
+                            if (value === undefined) {
+                                return acc;
+                            }
                             acc[key] = value;
-                        }
-                        return acc;
-                    }, {} as Record<string, any>);
+                            return acc;
+                        },
+                        {} as Record<string, any>
+                    );
 
                     // Build query from remaining non-path, non-body values
                     const queryEntries: [string, string][] = [];
                     for (const [key, value] of Object.entries(input)) {
-                        if (pathParams.includes(key) || bodyParamNames.includes(key)) continue;
-                        if (value === undefined || value === null) continue;
+                        if (
+                            pathParams.includes(key) ||
+                            !queryParamNames.includes(key)
+                        ) {
+                            continue;
+                        }
+                        if (value === undefined || value === null) {
+                            continue;
+                        }
                         if (Array.isArray(value)) {
                             for (const v of value) {
                                 queryEntries.push([key, String(v)]);
@@ -147,7 +168,7 @@ export default class MedusaStoreService {
                                 "Accept": "application/json",
                                 "Authorization": `Bearer ${process.env.PUBLISHABLE_KEY}`
                             },
-                            body: JSON.stringify(body)
+                            body
                         });
                         return response;
                     }

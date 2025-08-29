@@ -1,9 +1,9 @@
 import Medusa from "@medusajs/js-sdk";
 import { config } from "dotenv";
-import { z, ZodTypeAny } from "zod";
+import { ZodTypeAny } from "zod";
 import adminJson from "../oas/admin.json";
 import { SdkRequestType, Parameter } from "../types/admin-json";
-import { defineTool, InferToolHandlerInput } from "../utils/define-tools";
+import { defineTool } from "../utils/define-tools";
 
 config();
 
@@ -35,7 +35,15 @@ export default class MedusaAdminService {
         this.adminToken = res.toString();
     }
 
-    wrapPath(refPath: string, refFunction: SdkRequestType) {
+    wrapPath(
+        refPath: string,
+        refFunction: SdkRequestType
+    ): ReturnType<typeof defineTool> {
+        type MethodShape = {
+            operationId: string;
+            description: string;
+            parameters?: Parameter[];
+        };
         return defineTool((z) => {
             let name;
             let description;
@@ -43,19 +51,25 @@ export default class MedusaAdminService {
             let method = "get";
             if ("get" in refFunction) {
                 method = "get";
-                name = refFunction.get.operationId;
-                description = refFunction.get.description;
-                parameters = (refFunction.get.parameters ?? "") as any;
+                const getM = (refFunction as unknown as { get: MethodShape })
+                    .get;
+                name = getM.operationId;
+                description = getM.description;
+                parameters = getM.parameters ?? [];
             } else if ("post" in refFunction) {
                 method = "post";
-                name = refFunction.post.operationId;
-                description = refFunction.post.description;
-                parameters = refFunction.post.parameters ?? [];
+                const postM = (refFunction as unknown as { post: MethodShape })
+                    .post;
+                name = postM.operationId;
+                description = postM.description;
+                parameters = postM.parameters ?? [];
             } else if ("delete" in refFunction) {
                 method = "delete";
-                name = (refFunction.delete as any).operationId;
-                description = (refFunction.delete as any).description;
-                parameters = (refFunction.delete as any).parameters ?? [];
+                const delM = (refFunction as unknown as { delete: MethodShape })
+                    .delete;
+                name = delM.operationId;
+                description = delM.description;
+                parameters = delM.parameters ?? [];
             }
             if (!name) {
                 throw new Error("No name found for path: " + refPath);
@@ -89,42 +103,65 @@ export default class MedusaAdminService {
                                     acc[param.name] = z.string().optional();
                             }
                             return acc;
-                        }, {} as any)
+                        }, {} as Record<string, ZodTypeAny>)
                 },
 
                 handler: async (
-                    input: InferToolHandlerInput<any, ZodTypeAny>
-                ): Promise<any> => {
+                    input: Record<string, unknown>
+                ): Promise<unknown> => {
                     // Separate params by location
-                    const pathParams = parameters.filter((p) => p.in === "path").map((p) => p.name);
-                    const bodyParamNames = parameters.filter((p) => p.in === "body").map((p) => p.name);
+                    const pathParams = parameters
+                        .filter((p) => p.in === "path")
+                        .map((p) => p.name);
+                    const queryParamNames = parameters
+                        .filter((p) => p.in === "query")
+                        .map((p) => p.name);
 
                     // Build final path by replacing {param} occurrences
                     let finalPath = refPath;
                     for (const pName of pathParams) {
-                        const val = (input as any)[pName];
-                        if (val === undefined || val === null) continue;
+                        const val = (input as Record<string, unknown>)[pName];
+                        if (val === undefined || val === null) {
+                            continue;
+                        }
                         finalPath = finalPath.replace(
                             new RegExp(`\\{${pName}\\}`, "g"),
                             encodeURIComponent(String(val))
                         );
                     }
 
-                    // Build body from declared body params only
-                    const body = Object.entries(input).reduce((acc, [key, value]) => {
-                        if (bodyParamNames.includes(key)) {
-                            acc[key] = value;
-                        }
-                        return acc;
-                    }, {} as Record<string, any>);
+                    // Build body from non-path, non-query inputs
+                    const body = Object.entries(input).reduce(
+                        (acc, [key, value]) => {
+                            if (
+                                pathParams.includes(key) ||
+                                queryParamNames.includes(key)
+                            ) {
+                                return acc;
+                            }
+                            if (value === undefined) {
+                                return acc;
+                            }
+                            (acc as Record<string, unknown>)[key] =
+                                value as unknown;
+                            return acc;
+                        },
+                        {} as Record<string, unknown>
+                    );
 
-                    // Build query from remaining non-path, non-body values
+                    // Build query from declared query params only
                     const queryEntries: [string, string][] = [];
                     for (const [key, value] of Object.entries(input)) {
-                        if (pathParams.includes(key) || bodyParamNames.includes(key)) continue;
-                        if (value === undefined || value === null) continue;
+                        if (!queryParamNames.includes(key)) {
+                            continue;
+                        }
+                        if (value === undefined || value === null) {
+                            continue;
+                        }
                         if (Array.isArray(value)) {
-                            for (const v of value) queryEntries.push([key, String(v)]);
+                            for (const v of value) {
+                                queryEntries.push([key, String(v)]);
+                            }
                         } else if (typeof value === "object") {
                             queryEntries.push([key, JSON.stringify(value)]);
                         } else {
@@ -133,26 +170,32 @@ export default class MedusaAdminService {
                     }
                     const query = new URLSearchParams(queryEntries);
                     if (method === "get") {
-                        const response = await this.sdk.client.fetch(finalPath, {
-                            method: method,
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Accept": "application/json",
-                                "Authorization": `Bearer ${this.adminToken}`
-                            },
-                            query
-                        });
+                        const response = await this.sdk.client.fetch(
+                            finalPath,
+                            {
+                                method: method,
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "Accept": "application/json",
+                                    "Authorization": `Bearer ${this.adminToken}`
+                                },
+                                query
+                            }
+                        );
                         return response;
                     } else {
-                        const response = await this.sdk.client.fetch(finalPath, {
-                            method: method,
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Accept": "application/json",
-                                "Authorization": `Bearer ${this.adminToken}`
-                            },
-                            body: JSON.stringify(body)
-                        });
+                        const response = await this.sdk.client.fetch(
+                            finalPath,
+                            {
+                                method: method,
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "Accept": "application/json",
+                                    "Authorization": `Bearer ${this.adminToken}`
+                                },
+                                body
+                            }
+                        );
                         return response;
                     }
                 }
@@ -160,7 +203,7 @@ export default class MedusaAdminService {
         });
     }
 
-    defineTools(admin = adminJson): any[] {
+    defineTools(admin = adminJson): Array<ReturnType<typeof defineTool>> {
         const paths = Object.entries(admin.paths) as [string, SdkRequestType][];
         const tools = paths.map(([path, refFunction]) =>
             this.wrapPath(path, refFunction)
