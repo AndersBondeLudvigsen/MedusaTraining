@@ -22,7 +22,9 @@
     "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit"
   },
   "dependencies": {
-  "@google/genai": "^1.16.0",
+  "@medusajs/js-sdk": "2.9.0",
+    "@faker-js/faker": "^10.0.0",
+    "@google/genai": "^1.16.0",
     "@medusajs/admin-sdk": "2.9.0",
     "@medusajs/cli": "2.9.0",
     "@medusajs/framework": "2.9.0",
