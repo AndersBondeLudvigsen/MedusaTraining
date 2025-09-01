@@ -182,7 +182,35 @@ export default class MedusaAdminService {
                         // Best-effort top-level body fields to help LLMs choose POST tools
                         ...(method !== "get"
                             ? Array.from(bodyKeys).reduce((acc, key) => {
-                                  acc[key] = z.any().optional();
+                                  const propType = propertyTypes.get(key) as {
+                                      type?: string;
+                                      description?: string;
+                                      example?: unknown;
+                                      items?: { type?: string };
+                                  } | undefined;
+                                  
+                                  // Create more descriptive Zod schemas based on OpenAPI info
+                                  // BUT make them all optional since we provide defaults
+                                  if (propType?.type === "array") {
+                                      if (key === "options") {
+                                          acc[key] = z.array(z.object({
+                                              title: z.string(),
+                                              values: z.array(z.string())
+                                          })).optional().describe("Product options with title and values. Example: [{\"title\": \"Size\", \"values\": [\"S\", \"M\", \"L\"]}]");
+                                      } else {
+                                          acc[key] = z.array(z.any()).optional().describe(propType.description || `Array field: ${key}`);
+                                      }
+                                  } else if (propType?.type === "object") {
+                                      acc[key] = z.record(z.any()).optional().describe(propType.description || `Object field: ${key}. Use empty object {} if no specific data needed.`);
+                                  } else if (propType?.type === "string") {
+                                      acc[key] = z.string().optional().describe(propType.description || `String field: ${key}`);
+                                  } else if (propType?.type === "number") {
+                                      acc[key] = z.number().optional().describe(propType.description || `Number field: ${key}`);
+                                  } else if (propType?.type === "boolean") {
+                                      acc[key] = z.boolean().optional().describe(propType.description || `Boolean field: ${key}`);
+                                  } else {
+                                      acc[key] = z.any().optional().describe(propType?.description || `Field: ${key}`);
+                                  }
                                   return acc;
                               }, {} as Record<string, ZodTypeAny>)
                             : {})
@@ -247,21 +275,50 @@ export default class MedusaAdminService {
                             initialBody
                         );
 
-                        // Simplified required field handling - only for critical cases
+                        // Schema-driven required field handling
                         if (method === "post" && requiredFields.size > 0) {
-                            // Only handle the most common critical cases
-                            if (
-                                requiredFields.has("options") &&
-                                !body.options &&
-                                body.title
-                            ) {
-                                // Product creation needs options
-                                body.options = [
-                                    {
-                                        title: "Default option",
-                                        values: ["Default value"]
+                            for (const requiredField of requiredFields) {
+                                const fieldValue = body[requiredField];
+                                const isFieldMissing = fieldValue === undefined || 
+                                                     fieldValue === null || 
+                                                     (Array.isArray(fieldValue) && fieldValue.length === 0);
+                                
+                                if (isFieldMissing) {
+                                    // Get the property type information
+                                    const propType = propertyTypes.get(requiredField) as {
+                                        type?: string;
+                                        items?: unknown;
+                                        example?: unknown;
+                                        default?: unknown;
+                                    } | undefined;
+                                    
+                                    // Provide defaults based on schema type information
+                                    if (propType?.type === "object") {
+                                        body[requiredField] = propType.default ?? {};
+                                    } else if (propType?.type === "array") {
+                                        // For arrays, check if we have example data
+                                        if (propType.example) {
+                                            body[requiredField] = propType.example;
+                                        } else if (requiredField === "options") {
+                                            // Special case for product options - use schema knowledge
+                                            body[requiredField] = [
+                                                {
+                                                    title: "Default option",
+                                                    values: ["Default value"]
+                                                }
+                                            ];
+                                        } else {
+                                            body[requiredField] = [];
+                                        }
+                                    } else if (propType?.type === "string") {
+                                        body[requiredField] = propType.default ?? "";
+                                    } else if (propType?.type === "number") {
+                                        body[requiredField] = propType.default ?? 0;
+                                    } else if (propType?.type === "boolean") {
+                                        body[requiredField] = propType.default ?? false;
                                     }
-                                ];
+                                    // If we don't know the type, skip it - don't guess
+                                }
                             }
                         }
 
