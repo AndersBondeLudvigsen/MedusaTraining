@@ -58,6 +58,7 @@ export default class MedusaAdminService {
 
                 // Collect simple body property keys from requestBody schema (best-effort)
                 const bodyKeys = new Set<string>();
+                const requiredFields = new Set<string>();
                 let requestBodySchema: unknown | undefined;
                 if (method === "post") {
                     const postBody = (
@@ -75,15 +76,49 @@ export default class MedusaAdminService {
                     }
                     const s = schema as {
                         properties?: Record<string, unknown>;
+                        required?: string[];
                         allOf?: unknown[];
                         oneOf?: unknown[];
                         anyOf?: unknown[];
+                        $ref?: string;
                     };
+                    
+                    // Handle $ref by resolving to the actual schema
+                    if (s.$ref && typeof s.$ref === "string") {
+                        // Extract the reference path
+                        const refPath = s.$ref.replace(
+                            "#/components/schemas/",
+                            ""
+                        );
+                        const refSchema = (
+                            adminJson as unknown as {
+                                components?: {
+                                    schemas?: Record<string, unknown>;
+                                };
+                            }
+                        ).components?.schemas?.[refPath];
+                        if (refSchema) {
+                            collectProps(refSchema);
+                        }
+                        return;
+                    }
+                    
+                    // Collect properties
                     if (s.properties && typeof s.properties === "object") {
                         for (const key of Object.keys(s.properties)) {
                             bodyKeys.add(key);
                         }
                     }
+                    
+                    // Collect required fields
+                    if (Array.isArray(s.required)) {
+                        for (const field of s.required) {
+                            if (typeof field === "string") {
+                                requiredFields.add(field);
+                            }
+                        }
+                    }
+                    
                     if (Array.isArray(s.allOf)) {
                         s.allOf.forEach(collectProps);
                     }
@@ -204,6 +239,65 @@ export default class MedusaAdminService {
                             },
                             initialBody
                         );
+
+                        // Generic handling of required fields with sensible defaults
+                        if (method === "post" && requiredFields.size > 0) {
+                            for (const requiredField of requiredFields) {
+                                if (!(requiredField in body)) {
+                                    // Provide sensible defaults for common required fields
+                                    switch (requiredField) {
+                                        case "title":
+                                            body.title = "Untitled";
+                                            break;
+                                        case "name":
+                                            body.name = "Unnamed";
+                                            break;
+                                        case "options":
+                                            body.options = [
+                                                {
+                                                    title: "Default option",
+                                                    values: [
+                                                        "Default option value"
+                                                    ]
+                                                }
+                                            ];
+                                            break;
+                                        case "email":
+                                            // Skip email - this should be provided by user
+                                            break;
+                                        case "password":
+                                            // Skip password - this should be provided by user
+                                            break;
+                                        case "type":
+                                            body.type = "default";
+                                            break;
+                                        case "status":
+                                            body.status = "draft";
+                                            break;
+                                        case "currency_code":
+                                            body.currency_code = "USD";
+                                            break;
+                                        case "amount":
+                                            body.amount = 0;
+                                            break;
+                                        case "values":
+                                            body.values = ["Default value"];
+                                            break;
+                                        default:
+                                            // For unknown required fields, try to provide a reasonable default
+                                            if (requiredField.includes("id")) {
+                                                // Skip ID fields - these usually should be provided
+                                                break;
+                                            }
+                                            // Provide a generic default
+                                            (body as Record<string, unknown>)[
+                                                requiredField
+                                            ] = `default_${requiredField}`;
+                                            break;
+                                    }
+                                }
+                            }
+                        }
 
                         // Build query from declared query params only
                         const queryEntries: [string, string][] = [];

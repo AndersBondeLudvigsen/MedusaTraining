@@ -126,6 +126,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       }
       const available: McpTool[] = (tools.tools ?? []) as any;
       const llmChoice = await selectToolWithGemini(prompt, available, toolArgs);
+      console.log("LLM Choice Debug:");
+      console.log("Choice:", JSON.stringify(llmChoice, null, 2));
       toolName = llmChoice.name!;
       toolArgs = { ...(llmChoice.args ?? {}), ...(body.args ?? {}) };
     }
@@ -139,6 +141,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
 
     const result = await mcp.callTool(toolName, toolArgs);
+
+    console.log("MCP Tool Call Debug:");
+    console.log("Tool Name:", toolName);
+    console.log("Tool Args:", JSON.stringify(toolArgs, null, 2));
 
     // Gather tool text output (if present) to aid summarization
     const textParts = Array.isArray(result?.content)
