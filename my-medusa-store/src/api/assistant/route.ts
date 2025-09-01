@@ -42,10 +42,14 @@ async function selectToolWithGemini(
     `Return a single JSON object ONLY, no commentary.\n\n` +
     `JSON format:\n` +
     `{"name": string, "args": object}\n\n` +
-    `Rules:\n` +
+    `IMPORTANT RULES:\n` +
     `- name must be one of the tool names in the catalog.\n` +
     `- args must follow the tool's input JSON schema (field names and types).\n` +
-    `- If unsure, pick the most relevant tool and provide minimal sensible args.\n` +
+    `- AVOID batch operations (tools with "Batch" in name) unless explicitly asked for bulk operations.\n` +
+    `- For product creation: ALWAYS include both "title" and "options" in args.\n` +
+    `- For customer creation: ALWAYS include "email" in args.\n` +
+    `- Do not provide metadata fields unless specifically requested.\n` +
+    `- If unsure, pick the most specific non-batch tool and provide all required fields.\n` +
     `- Do not include code fences unless asked (but if you do, it's okay—we'll strip them).`;
 
   const ai = new GoogleGenAI({ apiKey });

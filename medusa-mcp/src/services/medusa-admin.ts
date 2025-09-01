@@ -56,9 +56,9 @@ export default class MedusaAdminService {
                 const description = methodShape.description;
                 const parameters = methodShape.parameters ?? [];
 
-                // Collect simple body property keys from requestBody schema (best-effort)
                 const bodyKeys = new Set<string>();
                 const requiredFields = new Set<string>();
+                const propertyTypes = new Map<string, unknown>();
                 let requestBodySchema: unknown | undefined;
                 if (method === "post") {
                     const postBody = (
@@ -105,8 +105,11 @@ export default class MedusaAdminService {
                     
                     // Collect properties
                     if (s.properties && typeof s.properties === "object") {
-                        for (const key of Object.keys(s.properties)) {
+                        for (const [key, propSchema] of Object.entries(
+                            s.properties
+                        )) {
                             bodyKeys.add(key);
+                            propertyTypes.set(key, propSchema);
                         }
                     }
                     
@@ -135,7 +138,11 @@ export default class MedusaAdminService {
 
                 return {
                     name: `Admin${name}`,
-                    description: `This tool helps store administors. ${description}`,
+                    description: `${description}${this.generateUsageHint(
+                        name,
+                        methodShape,
+                        method
+                    )}`,
                     inputSchema: {
                         // Query and path params
                         ...parameters
@@ -240,62 +247,21 @@ export default class MedusaAdminService {
                             initialBody
                         );
 
-                        // Generic handling of required fields with sensible defaults
+                        // Simplified required field handling - only for critical cases
                         if (method === "post" && requiredFields.size > 0) {
-                            for (const requiredField of requiredFields) {
-                                if (!(requiredField in body)) {
-                                    // Provide sensible defaults for common required fields
-                                    switch (requiredField) {
-                                        case "title":
-                                            body.title = "Untitled";
-                                            break;
-                                        case "name":
-                                            body.name = "Unnamed";
-                                            break;
-                                        case "options":
-                                            body.options = [
-                                                {
-                                                    title: "Default option",
-                                                    values: [
-                                                        "Default option value"
-                                                    ]
-                                                }
-                                            ];
-                                            break;
-                                        case "email":
-                                            // Skip email - this should be provided by user
-                                            break;
-                                        case "password":
-                                            // Skip password - this should be provided by user
-                                            break;
-                                        case "type":
-                                            body.type = "default";
-                                            break;
-                                        case "status":
-                                            body.status = "draft";
-                                            break;
-                                        case "currency_code":
-                                            body.currency_code = "USD";
-                                            break;
-                                        case "amount":
-                                            body.amount = 0;
-                                            break;
-                                        case "values":
-                                            body.values = ["Default value"];
-                                            break;
-                                        default:
-                                            // For unknown required fields, try to provide a reasonable default
-                                            if (requiredField.includes("id")) {
-                                                // Skip ID fields - these usually should be provided
-                                                break;
-                                            }
-                                            // Provide a generic default
-                                            (body as Record<string, unknown>)[
-                                                requiredField
-                                            ] = `default_${requiredField}`;
-                                            break;
+                            // Only handle the most common critical cases
+                            if (
+                                requiredFields.has("options") &&
+                                !body.options &&
+                                body.title
+                            ) {
+                                // Product creation needs options
+                                body.options = [
+                                    {
+                                        title: "Default option",
+                                        values: ["Default value"]
                                     }
-                                }
+                                ];
                             }
                         }
 
@@ -378,6 +344,33 @@ export default class MedusaAdminService {
         }
 
         return tools;
+    }
+
+    private generateUsageHint(
+        operationId: string,
+        methodShape: Record<string, unknown>,
+        method: string
+    ): string {
+        // Provide specific guidance for common operations
+        if (method === "post") {
+            if (operationId.includes("Batch")) {
+                return " **BATCH OPERATION**: Only use this for bulk operations with multiple items. Requires arrays: create[], update[], delete[]. For single operations, use the non-batch version.";
+            }
+            
+            if (operationId.includes("PostProducts")) {
+                return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title": "Product Name", "options": [{"title": "Size", "values": ["S", "M", "L"]}]}';
+            }
+            
+            if (operationId.includes("PostCustomers")) {
+                return " **REQUIRED**: email (string). Optional: first_name, last_name, phone. Do not provide metadata as string.";
+            }
+            
+            if (operationId.includes("Inventory")) {
+                return " **INVENTORY**: Use for stock management. Requires location_id, inventory_item_id, stocked_quantity.";
+            }
+        }
+        
+        return "";
     }
 
     defineTools(admin = adminJson): Array<ReturnType<typeof defineTool>> {
