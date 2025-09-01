@@ -21,7 +21,7 @@ async function selectToolWithGemini(
   userPrompt: string,
   tools: McpTool[],
   hints?: Record<string, any>,
-  modelName = "gemini-2.0-flash"
+  modelName = "gemini-2.5-flash"
 ): Promise<{ name?: string; args?: Record<string, any>; raw?: any }> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) {
@@ -85,7 +85,7 @@ async function naturalLanguageAnswerWithGemini(
   selectedTool: string,
   toolArgs: Record<string, any>,
   toolResult: any,
-  modelName = "gemini-2.0-flash"
+  modelName = "gemini-2.5-flash"
 ): Promise<string> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
@@ -114,9 +114,9 @@ async function naturalLanguageAnswerWithGemini(
  */
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   try {
-  const body = (req.body ?? {}) as { prompt?: string; tool?: string; args?: Record<string, any> };
+    const body = (req.body ?? {}) as { prompt?: string; tool?: string; args?: Record<string, any> };
     const prompt = body.prompt?.trim();
-  const mcp = await getMcp();
+    const mcp = await getMcp();
 
     const tools = await mcp.listTools();
 
@@ -130,8 +130,16 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       }
       const available: McpTool[] = (tools.tools ?? []) as any;
       const llmChoice = await selectToolWithGemini(prompt, available, toolArgs);
-      console.log("LLM Choice Debug:");
-      console.log("Choice:", JSON.stringify(llmChoice, null, 2));
+      
+      // --- 🕵️ LLM TOOL SELECTION ---
+      // This block shows you what the AI decided to do based on the prompt.
+      console.log("\n\n--- 🕵️ LLM TOOL SELECTION ---");
+      console.log("User Prompt:", prompt);
+      console.log("LLM Chose Tool:", llmChoice.name);
+      console.log("LLM Generated Args:", JSON.stringify(llmChoice.args, null, 2));
+      console.log("-----------------------------\n");
+      // --- END OF BLOCK ---
+
       toolName = llmChoice.name!;
       toolArgs = { ...(llmChoice.args ?? {}), ...(body.args ?? {}) };
     }
@@ -146,9 +154,13 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
     const result = await mcp.callTool(toolName, toolArgs);
 
-    console.log("MCP Tool Call Debug:");
+    // --- 🛠️ MCP TOOL EXECUTION ---
+    // This block shows the raw output from the tool call, which contains the real error message.
+    console.log("\n--- 🛠️ MCP TOOL EXECUTION ---");
     console.log("Tool Name:", toolName);
-    console.log("Tool Args:", JSON.stringify(toolArgs, null, 2));
+    console.log("Final Tool Args:", JSON.stringify(toolArgs, null, 2));
+    console.log("RAW TOOL RESULT:", JSON.stringify(result, null, 2)); // This is the most important log.
+    console.log("--------------------------\n");
 
     // Gather tool text output (if present) to aid summarization
     const textParts = Array.isArray(result?.content)
@@ -156,18 +168,31 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       : [];
     const toolText = textParts.length ? textParts.join("\n\n") : undefined;
 
+    // --- 🤖 INPUT TO SUMMARIZER ---
+    // This block shows what information the AI is using to generate its final friendly answer.
+    const summaryInput = toolText ?? result;
+    console.log("\n--- 🤖 INPUT TO SUMMARIZER ---");
+    console.log(JSON.stringify(summaryInput, null, 2));
+    console.log("----------------------------\n");
+    // --- END OF BLOCK ---
+
     // Produce a natural-language answer via Gemini
-    const modelName = env("GEMINI_MODEL") || "gemini-2.0-flash";
+    const modelName = env("GEMINI_MODEL") || "gemini-2.5-flash";
     const answer = await naturalLanguageAnswerWithGemini(
       prompt || "",
       toolName,
       toolArgs,
-      toolText ?? result,
+      summaryInput, // Use the logged variable
       modelName
     );
 
-  return res.json({ answer });
+    return res.json({ answer });
   } catch (e: any) {
+    // --- 💥 UNCAUGHT EXCEPTION ---
+    // This will catch any unexpected crashes in the function.
+    console.error("\n--- 💥 UNCAUGHT EXCEPTION ---");
+    console.error(e);
+    console.error("--------------------------\n");
     return res.status(500).json({ error: e?.message ?? String(e) });
   }
 }
