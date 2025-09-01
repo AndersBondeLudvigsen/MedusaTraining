@@ -264,8 +264,9 @@ export interface AdminJson {
   }
   
   export interface AdminApiKeys {
-    get: Get
     post: Post
+    get: Get
+    
   }
   
   export interface Get {
