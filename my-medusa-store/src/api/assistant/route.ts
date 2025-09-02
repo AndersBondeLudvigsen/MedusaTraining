@@ -29,7 +29,7 @@ async function planNextStepWithGemini(
   tools: McpTool[],
 
   history: { tool_name: string; tool_args: any; tool_result: any }[],
-  modelName = "gemini-1.5-flash"
+  modelName = "gemini-2.5-flash"
 ): Promise<{ action: 'call_tool' | 'final_answer'; tool_name?: string; tool_args?: any; answer?: string }> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
