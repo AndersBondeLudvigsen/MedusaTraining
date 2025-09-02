@@ -19,6 +19,7 @@
   "nuke:dry": "set NUKE_ALL=1 && set NUKE_DRY_RUN=1 && medusa exec ./src/scripts/nuke-db.ts",
   "nuke:all": "set NUKE_ALL=1 && medusa exec ./src/scripts/nuke-db.ts",
   "nuke:preserve": "set NUKE_ALL=1 && set NUKE_PRESERVE_STORE=1 && set NUKE_PRESERVE_USERS=1 && medusa exec ./src/scripts/nuke-db.ts",
+    "seedOrders": "medusa exec ./src/scripts/seed-orders.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
@@ -27,7 +28,7 @@
   },
   "dependencies": {
   "@medusajs/js-sdk": "2.9.0",
-    "@faker-js/faker": "^10.0.0",
+ "@faker-js/faker": "^10.0.0",
     "@google/genai": "^1.16.0",
     "@medusajs/admin-sdk": "2.9.0",
     "@medusajs/cli": "2.9.0",

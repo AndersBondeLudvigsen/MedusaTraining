@@ -2,170 +2,143 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
 import { getMcp } from "../../lib/mcp/manager";
 
 type McpTool = {
-  name: string
-  description?: string
-  input_schema?: any
+  name: string;
+  description?: string;
+  input_schema?: any;
 };
 
 function env(key: string): string | undefined {
-  return (process.env as any)?.[key];
+  return (process.env as any)?.[key];
 }
 
 function stripJsonFences(text: string): string {
-  const fence = /```(?:json)?\n([\s\S]*?)\n```/i;
-  const m = text.match(fence);
-  return m ? m[1] : text;
+  const fence = /```(?:json)?\n([\s\S]*?)\n```/i;
+  const m = text.match(fence);
+  return m ? m[1] : text;
 }
 
-async function selectToolWithGemini(
+/**
+ * The AI's "brain". It plans the next step based on the user's goal and the history of previous actions.
+ * @param userPrompt The original goal from the user.
+ * @param tools The list of available tools.
+ * @param history The log of tools that have already been called and their results.
+ * @returns A plan of action: either call another tool or provide the final answer.
+ */
+async function planNextStepWithGemini(
   userPrompt: string,
   tools: McpTool[],
-  hints?: Record<string, any>,
-  modelName = "gemini-2.5-flash"
-): Promise<{ name?: string; args?: Record<string, any>; raw?: any }> {
-  const apiKey = env("GEMINI_API_KEY");
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set");
-  }
-  const { GoogleGenAI } = await import("@google/genai");
 
-  // Build compact tool schema for the model
-  const toolCatalog = tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    // include only the JSON Schema properties for brevity if present
-    schema: t.input_schema ?? undefined,
-  }));
-
-  const instruction = `You are a tool selector for an e-commerce backend.\n\n` +
-    `Choose exactly one tool from the provided catalog that best accomplishes the user's intent. ` +
-    `Return a single JSON object ONLY, no commentary.\n\n` +
-    `JSON format:\n` +
-    `{"name": string, "args": object}\n\n` +
-    `IMPORTANT RULES:\n` +
-    `- name must be one of the tool names in the catalog.\n` +
-    `- args must follow the tool's input JSON schema (field names and types).\n` +
-    `- AVOID batch operations (tools with "Batch" in name) unless explicitly asked for bulk operations.\n` +
-    `- Do not provide metadata fields unless specifically requested.\n` +
-    `- If unsure, pick the most specific non-batch tool and provide all required fields.\n` +
-    `- Do not include code fences unless asked (but if you do, it's okay—we'll strip them).`;
-
-  const ai = new GoogleGenAI({ apiKey });
-  const promptText = [
-    instruction,
-    `Tool Catalog (JSON):\n${JSON.stringify(toolCatalog, null, 2)}`,
-    `User Prompt: ${userPrompt}`,
-    ...(hints && Object.keys(hints).length
-      ? [`Hints (preferred args/overrides): ${JSON.stringify(hints)}`]
-      : []),
-    `Respond with ONLY the JSON object as specified.`,
-  ].join("\n\n");
-
-  const result = await ai.models.generateContent({ model: modelName, contents: promptText });
-  const text = result.text;
-  if (!text) throw new Error("LLM returned empty response");
-  let jsonText = stripJsonFences(text).trim();
-  try {
-    const parsed = JSON.parse(jsonText);
-    if (typeof parsed?.name === "string") {
-      const name = parsed.name as string;
-      const args = (parsed.args ?? {}) as Record<string, any>;
-      return { name, args, raw: parsed };
-    }
-  } catch {
-    throw new Error("Failed to parse LLM JSON response");
-  }
-  throw new Error("LLM did not return a valid tool selection");
-}
-
-async function naturalLanguageAnswerWithGemini(
-  userPrompt: string,
-  selectedTool: string,
-  toolArgs: Record<string, any>,
-  toolResult: any,
-  modelName = "gemini-2.5-flash"
-): Promise<string> {
+  history: { tool_name: string; tool_args: any; tool_result: any }[],
+  modelName = "gemini-1.5-flash"
+): Promise<{ action: 'call_tool' | 'final_answer'; tool_name?: string; tool_args?: any; answer?: string }> {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
   const { GoogleGenAI } = await import("@google/genai");
 
-  const ai = new GoogleGenAI({ apiKey });
-  const summaryPrompt = [
-    `You are an assistant that explains structured tool outputs to users in clear, concise natural language.`,
-    `User Prompt: ${userPrompt}`,
-    `Selected Tool: ${selectedTool}`,
-    `Tool Arguments (JSON):\n${JSON.stringify(toolArgs, null, 2)}`,
-    `Tool Result (JSON or text):\n${typeof toolResult === "string" ? toolResult : JSON.stringify(toolResult, null, 2)}`,
-    `Instructions:\n- Provide a short, user-friendly answer based on the tool result.\n- Do NOT output JSON or code.\n- Use plain sentences or bullet points.\n- If there are many items, summarize the key points.`,
-  ].join("\n\n");
+  const toolCatalog = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    schema: t.input_schema ?? undefined,
+  }));
 
-  const response = await ai.models.generateContent({ model: modelName, contents: summaryPrompt });
-  const text = response.text ?? "";
-  if (!text) throw new Error("LLM returned empty summary");
-  return text.trim();
+  const instruction =
+    `You are a reasoning agent for an e-commerce backend. Your goal is to accomplish the user's request by calling tools in sequence. ` +
+    `Based on the user's prompt and the history of previous tool calls, decide the next step. ` +
+    `You have two possible actions: 'call_tool' or 'final_answer'.\n\n` +
+    `1. If you need more information or need to perform an action, choose 'call_tool'.\n` +
+    `2. If you have successfully completed the user's request, choose 'final_answer' and provide a summary.\n\n` +
+    `Return a single JSON object ONLY, no commentary.\n\n` +
+    `JSON format for calling a tool:\n` +
+    `{"action": "call_tool", "tool_name": "string", "tool_args": object}\n\n` +
+    `JSON format for providing the final answer:\n` +
+    `{"action": "final_answer", "answer": "string"}`;
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  const promptText = [
+    instruction,
+    `Tool Catalog (JSON):\n${JSON.stringify(toolCatalog, null, 2)}`,
+    `History of previous steps (this will be empty on the first turn):\n${JSON.stringify(history, null, 2)}`,
+    `User's ultimate goal: ${userPrompt}`,
+    `Respond with ONLY the JSON object for the next action.`,
+  ].join("\n\n");
+  
+  const result = await ai.models.generateContent({ model: modelName, contents: promptText });
+  const text = result.text;
+  if (!text) throw new Error("LLM returned empty response");
+  
+  try {
+    const parsed = JSON.parse(stripJsonFences(text).trim());
+    return parsed;
+  } catch {
+    throw new Error("Failed to parse LLM JSON response for the next action");
+  }
 }
 
 /**
- * Simple AI-ish assistant endpoint that forwards a natural language prompt
- * to the MCP server by choosing a tool based on a keyword heuristic.
- * In production, replace selection with an LLM that plans tool calls.
+ * This is the main API endpoint. It uses an agent loop to handle multi-step tasks.
  */
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   try {
-  const body = (req.body ?? {}) as { prompt?: string; tool?: string; args?: Record<string, any> };
+    const body = (req.body ?? {}) as { prompt?: string };
     const prompt = body.prompt?.trim();
-  const mcp = await getMcp();
+    if (!prompt) {
+      return res.status(400).json({ error: "Missing prompt" });
+    }
 
+    const mcp = await getMcp();
     const tools = await mcp.listTools();
+    const availableTools: McpTool[] = (tools.tools ?? []) as any;
 
-    // Tool selection: prefer body.tool or else require LLM to choose — no heuristics.
-    let toolName = body.tool;
-    let toolArgs = body.args ?? {};
-    if (!toolName) {
-      if (!prompt) {
-        await mcp.close();
-        return res.status(400).json({ error: "Missing prompt or explicit tool name" });
+    // The "memory" of our agent, storing the results of each step
+    const history: { tool_name: string; tool_args: any; tool_result: any }[] = [];
+    const maxSteps = 5; // A safety limit to prevent infinite loops
+
+    for (let step = 0; step < maxSteps; step++) {
+      console.log(`\n--- 🔄 AGENT LOOP: STEP ${step + 1} ---`);
+      
+      // 1. Ask the AI to plan the next step based on the full history
+      const plan = await planNextStepWithGemini(prompt, availableTools, history);
+
+      // 2. Decide what to do based on the AI's planned action
+      if (plan.action === "final_answer") {
+        console.log("✅ AI decided to provide the final answer.");
+        //await mcp.close();
+        return res.json({ answer: plan.answer, history });
       }
-      const available: McpTool[] = (tools.tools ?? []) as any;
-      const llmChoice = await selectToolWithGemini(prompt, available, toolArgs);
-      console.log("LLM Choice Debug:");
-      console.log("Choice:", JSON.stringify(llmChoice, null, 2));
-      toolName = llmChoice.name!;
-      toolArgs = { ...(llmChoice.args ?? {}), ...(body.args ?? {}) };
+
+      if (plan.action === "call_tool" && plan.tool_name && plan.tool_args) {
+        console.log(`🧠 AI wants to call tool: ${plan.tool_name}`);
+        console.log(`   With args: ${JSON.stringify(plan.tool_args)}`);
+        
+        // 3. Execute the chosen tool
+        const result = await mcp.callTool(plan.tool_name, plan.tool_args);
+        console.log(`   Tool Result: ${JSON.stringify(result).substring(0, 200)}...`);
+        
+        // 4. Update the history with the outcome of the action
+        history.push({
+          tool_name: plan.tool_name,
+          tool_args: plan.tool_args,
+          tool_result: result,
+        });
+        
+        // The loop will now continue to the next step with this new information
+      } else {
+        throw new Error("AI returned an invalid plan. Cannot proceed.");
+      }
     }
 
-    if (!toolName) {
-      await mcp.close();
-      return res.json({
-        message: "No tools available from MCP server.",
-        tools: tools.tools ?? [],
-      });
-    }
+    // If the loop finishes, it means the task was too complex or got stuck
+    //await mcp.close();
+    return res.status(500).json({ 
+        error: "The agent could not complete the request within the maximum number of steps.",
+        history 
+    });
 
-    const result = await mcp.callTool(toolName, toolArgs);
-
-    console.log("MCP Tool Call Debug:");
-    console.log("Tool Name:", toolName);
-    console.log("Tool Args:", JSON.stringify(toolArgs, null, 2));
-
-    // Gather tool text output (if present) to aid summarization
-    const textParts = Array.isArray(result?.content)
-      ? result.content.filter((c: any) => c?.type === "text").map((c: any) => c.text)
-      : [];
-    const toolText = textParts.length ? textParts.join("\n\n") : undefined;
-
-    // Produce a natural-language answer via Gemini
-    const modelName = env("GEMINI_MODEL") || "gemini-2.5-flash";
-    const answer = await naturalLanguageAnswerWithGemini(
-      prompt || "",
-      toolName,
-      toolArgs,
-      toolText ?? result,
-      modelName
-    );
-
-  return res.json({ answer });
   } catch (e: any) {
+    console.error("\n--- 💥 UNCAUGHT EXCEPTION ---");
+    console.error(e);
+    console.error("--------------------------\n");
     return res.status(500).json({ error: e?.message ?? String(e) });
   }
 }
