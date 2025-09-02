@@ -17,6 +17,48 @@ function stripJsonFences(text: string): string {
   return m ? m[1] : text;
 }
 
+// Normalize LLM tool args to match Medusa Admin expectations
+function normalizeToolArgs(input: any): any {
+  const needsDollar = new Set([
+    "gt","gte","lt","lte","eq","ne","in","nin","not",
+    "like","ilike","re","fulltext","overlap","contains","contained","exists",
+    "and","or"
+  ]);
+
+  const toNumberIfNumericString = (v: unknown) => {
+    if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
+    return v;
+  };
+
+  const walk = (val: any, keyPath: string[] = []): any => {
+    if (Array.isArray(val)) {
+      // fields: ["a","b"] -> "a,b"
+      const lastKey = keyPath[keyPath.length - 1];
+      if (lastKey === "fields") {
+        return val.map(String).join(",");
+      }
+      return val.map((v) => walk(v, keyPath));
+    }
+    if (val && typeof val === "object") {
+      const out: Record<string, any> = {};
+      for (const [k, v] of Object.entries(val)) {
+        const bare = k.replace(/^\$/g, "");
+        const newKey = needsDollar.has(bare) ? `$${bare}` : k;
+        out[newKey] = walk(v, [...keyPath, newKey]);
+      }
+      return out;
+    }
+    // Special-case common numeric query params
+    const last = keyPath[keyPath.length - 1];
+    if (last === "limit" || last === "offset") {
+      return toNumberIfNumericString(val);
+    }
+    return val;
+  };
+
+  return walk(input);
+}
+
 /**
  * The AI's "brain". It plans the next step based on the user's goal and the history of previous actions.
  * @param userPrompt The original goal from the user.
@@ -119,13 +161,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         console.log(`   With args: ${JSON.stringify(plan.tool_args)}`);
         
         // 3. Execute the chosen tool
-        const result = await mcp.callTool(plan.tool_name, plan.tool_args);
+        const normalizedArgs = normalizeToolArgs(plan.tool_args);
+        if (JSON.stringify(normalizedArgs) !== JSON.stringify(plan.tool_args)) {
+          console.log(`   Normalized args: ${JSON.stringify(normalizedArgs)}`);
+        }
+        const result = await mcp.callTool(plan.tool_name, normalizedArgs);
         console.log(`   Tool Result: ${JSON.stringify(result).substring(0, 200)}...`);
         
         // 4. Update the history with the outcome of the action
         history.push({
           tool_name: plan.tool_name,
-          tool_args: plan.tool_args,
+          tool_args: normalizedArgs,
           tool_result: result,
         });
         
