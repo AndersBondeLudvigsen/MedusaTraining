@@ -12,23 +12,9 @@ import {
   deletePriceListsWorkflow,
   deleteCustomerGroupsWorkflow,
   deleteApiKeysWorkflow,
-  deleteDraftOrdersWorkflow,
 } from "@medusajs/medusa/core-flows"
 
-/**
- * Nuke script: deletes most data created during development.
- *
- * Safety:
- * - Requires one of: env NUKE_ALL=1 | --force flag
- * - Dry run supported via --dry-run
- * - Preserve subsets via --preserve-store, --preserve-users
- *
- * Design notes (SOLID/GRASP):
- * - SRP: each step handles a specific aggregate (products, orders, ...)
- * - OCP: easy to extend with new steps without modifying others
- * - DIP: interact via container-resolved module services and workflows
- * - Low coupling: helper utilities isolate query + deletion orchestration
- */
+
 
 type Flags = {
   force: boolean
@@ -39,18 +25,29 @@ type Flags = {
 
 function parseFlags(argv: string[]): Flags {
   const args = new Set(argv.slice(2))
-  const force = !!process.env.NUKE_ALL || args.has("--force") || args.has("-f")
+  const force =
+    !!process.env.NUKE_ALL ||
+    args.has("--force") ||
+    args.has("-f")
   return {
     force,
-    dryRun: args.has("--dry-run"),
-    preserveStore: args.has("--preserve-store"),
-    preserveUsers: args.has("--preserve-users"),
+    // Support env vars since medusa exec may reject unknown CLI args
+    dryRun: !!process.env.NUKE_DRY_RUN || args.has("--dry-run"),
+    preserveStore: !!process.env.NUKE_PRESERVE_STORE || args.has("--preserve-store"),
+    preserveUsers: !!process.env.NUKE_PRESERVE_USERS || args.has("--preserve-users"),
   }
 }
 
 async function listIds(query: any, entity: string): Promise<string[]> {
+  try {
   const { data } = await query.graph({ entity, fields: ["id"], filters: {} })
-  return (data || []).map((d: any) => d.id).filter(Boolean)
+  const ids = (data || []).map((d: any) => d.id).filter(Boolean)
+  console.log(`[nuke] ${entity}: ${ids.length} ids -> ${ids.join(",")}`)
+  return ids
+  } catch (e) {
+    // Entity not available in this project; treat as empty
+    return []
+  }
 }
 
 function chunk<T>(arr: T[], size = 50): T[][] {
