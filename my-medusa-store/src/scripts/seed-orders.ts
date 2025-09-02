@@ -11,6 +11,13 @@ import {
   Modules,
   ContainerRegistrationKeys
 } from "@medusajs/framework/utils";
+import {
+  createStockLocationsWorkflow,
+  createInventoryLevelsWorkflow,
+  createShippingProfilesWorkflow,
+  createShippingOptionsWorkflow,
+  linkSalesChannelsToStockLocationWorkflow,
+} from "@medusajs/medusa/core-flows";
 
 export default async function seedDummyOrders({
   container,
@@ -21,6 +28,9 @@ export default async function seedDummyOrders({
   );
   const query = container.resolve(
     ContainerRegistrationKeys.QUERY
+  );
+  const link = container.resolve(
+    ContainerRegistrationKeys.LINK
   );
 
   // Check for existing customers
@@ -78,7 +88,7 @@ export default async function seedDummyOrders({
     }>
   };
   
-  const { data: shipping_options } = (await query.graph({
+  let { data: shipping_options } = (await query.graph({
     entity: "shipping_option",
     fields: [
       "id",
@@ -105,6 +115,135 @@ export default async function seedDummyOrders({
     .listSalesChannels({
       name: "Default Sales Channel",
     });
+
+  // Ensure stock location exists and is linked to the default sales channel; ensure basic shipping option as well
+  const fulfillmentModuleService = container.resolve(Modules.FULFILLMENT);
+  const storeModuleService = container.resolve(Modules.STORE);
+
+  // 1) Ensure at least one stock location
+  let { data: stock_locations } = await query.graph({
+    entity: "stock_location",
+    fields: ["id", "name"],
+  }) as { data: Array<{ id: string; name: string }> };
+
+  if (!stock_locations.length) {
+    const { result: locs } = await createStockLocationsWorkflow(container).run({
+      input: {
+        locations: [
+          {
+            name: "Default Warehouse",
+            address: { city: "Copenhagen", country_code: "DK", address_1: "" },
+          },
+        ],
+      },
+    })
+    stock_locations = locs
+  }
+  const stockLocationId = stock_locations[0].id
+
+  // 2) Link default sales channel to stock location (idempotent)
+  if (defaultSalesChannel?.[0]?.id) {
+    await linkSalesChannelsToStockLocationWorkflow(container).run({
+      input: { id: stockLocationId, add: [defaultSalesChannel[0].id] },
+    })
+  }
+
+  // 3) Ensure inventory levels exist for all inventory items at this location
+  const { data: inventoryItems } = await query.graph({
+    entity: "inventory_item",
+    fields: ["id"],
+  }) as { data: Array<{ id: string }> }
+
+  // Check existing levels to avoid duplicates
+  const { data: existingLevels } = await query.graph({
+    entity: "inventory_level",
+    fields: ["inventory_item_id"],
+    filters: { location_id: stockLocationId },
+  }) as { data: Array<{ inventory_item_id: string }> }
+
+  const existingSet = new Set(existingLevels.map((l) => l.inventory_item_id))
+  const levelsToCreate = inventoryItems
+    .filter((ii) => !existingSet.has(ii.id))
+    .map((ii) => ({
+      location_id: stockLocationId,
+      stocked_quantity: 1_000_000,
+      inventory_item_id: ii.id,
+    }))
+
+  if (levelsToCreate.length) {
+    await createInventoryLevelsWorkflow(container).run({
+      input: { inventory_levels: levelsToCreate },
+    })
+  }
+
+  // 4) Ensure a shipping option exists; if none, create minimal profile + option
+  if (!shipping_options.length) {
+    // Ensure default profile exists
+    const profiles = await fulfillmentModuleService.listShippingProfiles({ type: "default" })
+    let shippingProfile = profiles[0]
+    if (!shippingProfile) {
+      const { result: profs } = await createShippingProfilesWorkflow(container).run({
+        input: { data: [{ name: "Default Shipping Profile", type: "default" }] },
+      })
+      shippingProfile = profs[0]
+    }
+
+    // Create a simple service zone via fulfillment set
+    const countries = ["dk"]
+    const fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
+      name: "Default delivery",
+      type: "shipping",
+      service_zones: [
+        {
+          name: "Default Zone",
+          geo_zones: countries.map((c) => ({ country_code: c, type: "country" as const })),
+        },
+      ],
+    })
+
+    // Link stock location to manual provider and to the new fulfillment set (ignore duplicates)
+    try {
+      await link.create({
+        [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
+        [Modules.FULFILLMENT]: { fulfillment_provider_id: "manual_manual" },
+      })
+    } catch {}
+
+    try {
+      await link.create({
+        [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
+        [Modules.FULFILLMENT]: { fulfillment_set_id: fulfillmentSet.id },
+      })
+    } catch {}
+
+    await createShippingOptionsWorkflow(container).run({
+      input: [
+        {
+          name: "Standard Shipping",
+          price_type: "flat",
+          provider_id: "manual_manual",
+          service_zone_id: fulfillmentSet.service_zones[0].id,
+          shipping_profile_id: shippingProfile.id,
+          type: { label: "Standard", description: "Ship in 2-3 days.", code: "standard" },
+          prices: [
+            { currency_code: "usd", amount: 10 },
+            { currency_code: "eur", amount: 10 },
+          ],
+          rules: [
+            { attribute: "enabled_in_store", value: "true", operator: "eq" },
+            { attribute: "is_return", value: "false", operator: "eq" },
+          ],
+        },
+      ],
+    })
+
+    // re-fetch
+    const soRe = await query.graph({
+      entity: "shipping_option",
+      fields: ["id", "name"],
+    }) as { data: Array<{ id: string; name: string }> }
+    shipping_options = soRe.data
+  }
 
   // Generate 5 orders
   const ordersNum = 5;
