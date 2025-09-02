@@ -1,7 +1,6 @@
 import type { ExecArgs } from "@medusajs/framework/types";
 import { Client as PgClient } from "pg";
 import { createOrderWorkflow, createCustomersWorkflow } from "@medusajs/core-flows";
-// Use core-flows for payment/fulfillment helpers
 import {
   getOrderDetailWorkflow,
   createOrderFulfillmentWorkflow,
