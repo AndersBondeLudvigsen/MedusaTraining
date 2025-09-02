@@ -1,4 +1,5 @@
 import type { ExecArgs } from "@medusajs/framework/types";
+import { Client as PgClient } from "pg";
 import { createOrderWorkflow, createCustomersWorkflow } from "@medusajs/core-flows";
 // Use core-flows for payment/fulfillment helpers
 import {
@@ -327,6 +328,51 @@ export default async function seedDummyOrders({
         input: orderData,
       });
       logger.info(`Created order with ID: ${order.id}`);
+
+      // Backdate created_at to a random day within the last year (dev/seed only)
+      try {
+        const now = new Date();
+        const start = new Date(now);
+        start.setDate(start.getDate() - 365);
+        const offsetDays = Math.floor(Math.random() * 365);
+        const backdated = new Date(start);
+        backdated.setDate(start.getDate() + offsetDays);
+
+        const dbUrl = process.env.DATABASE_URL || "";
+        if (dbUrl.startsWith("postgres")) {
+          const pg = new PgClient({ connectionString: dbUrl });
+          await pg.connect();
+          try {
+            const candidates = [
+              '"order"',            // common for Medusa v2
+              'orders',               // fallback
+              'order_order'           // module-style naming fallback
+            ];
+            let updated = 0;
+            for (const table of candidates) {
+              const res = await pg.query(
+                `update ${table} set created_at = $1, updated_at = case when updated_at < $1 then $1 else updated_at end where id = $2`,
+                [backdated.toISOString(), order.id]
+              );
+              updated += res.rowCount || 0;
+              if (res.rowCount) break;
+            }
+            if (updated) {
+              logger.info(`Backdated order ${order.id} created_at -> ${backdated.toISOString()} (rows: ${updated})`);
+            } else {
+              logger.warn(`Could not locate order table to backdate ${order.id}. Tried common table names.`);
+            }
+          } finally {
+            await pg.end().catch(() => {});
+          }
+        } else {
+          logger.warn('DATABASE_URL is not Postgres; skipping hard backdate.');
+        }
+      } catch (e: any) {
+        logger.warn(`Failed to backdate created_at for ${order.id}: ${e?.message ?? e}`);
+      }
+
+      
 
       // Fetch order detail to get items and payment collections
       const { result: detail } = await getOrderDetailWorkflow(container).run({
