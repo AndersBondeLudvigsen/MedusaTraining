@@ -44,6 +44,12 @@ const AssistantPage = () => {
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onAsk();
+            }
+          }}
           placeholder='Ask the assistant (e.g. "Suggest a promotion description")'
           rows={4}
           className="border-ui-border-base bg-ui-bg-base text-ui-fg-base rounded-md border p-2"
