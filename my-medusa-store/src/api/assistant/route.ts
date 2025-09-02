@@ -41,12 +41,21 @@ async function planNextStepWithGemini(
   }));
 
   const instruction =
-    `You are a reasoning agent for an e-commerce backend. Your goal is to accomplish the user's request by calling tools in sequence. ` +
+  `You are a reasoning agent for an e-commerce backend. Your goal is to accomplish the user's request by calling tools in sequence. ` +
     `Based on the user's prompt and the history of previous tool calls, decide the next step. ` +
     `You have two possible actions: 'call_tool' or 'final_answer'.\n\n` +
     `1. If you need more information or need to perform an action, choose 'call_tool'.\n` +
     `2. If you have successfully completed the user's request, choose 'final_answer' and provide a summary.\n\n` +
-    `Return a single JSON object ONLY, no commentary.\n\n` +
+  `If the user asks for a chart/graph/visualization, the final answer MUST include a JSON object (ChartSpec) wrapped in a fenced code block. Use this exact shape:\n` +
+  `\n\n\`\`\`json\n` +
+  `${JSON.stringify({ type: "chart", chart: "bar", title: "string", xKey: "string", yKey: "string", data: [{ key: "value", value: 0 }] }, null, 2)}\n` +
+  `\`\`\`\n\n` +
+  `Notes: chart is either "bar" or "line". xKey is the x-axis field name in each data row. yKey is the numeric y-axis field name.\n` +
+  `Example: For daily counts, use chart="bar", xKey="date", yKey="count", data=[{"date":"2025-09-01","count":12}, ...].\n` +
+  `When a chart is requested, you MUST retrieve real data by calling the most relevant tool based on the user's goal (e.g. Admin* list endpoints).\n` +
+  `If the time range is implied (e.g. last 7 days/this week/this month), apply appropriate date filters (created_at/paid_at/etc.), aggregate by day (YYYY-MM-DD), and zero-fill missing days.\n` +
+  `Only after you have aggregated data, respond with action=final_answer and include one fenced ChartSpec JSON block in the 'answer'.\n\n` +
+  `Return a single JSON object ONLY, no commentary.\n\n` +
     `JSON format for calling a tool:\n` +
     `{"action": "call_tool", "tool_name": "string", "tool_args": object}\n\n` +
     `JSON format for providing the final answer:\n` +
@@ -102,7 +111,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       // 2. Decide what to do based on the AI's planned action
       if (plan.action === "final_answer") {
         console.log("✅ AI decided to provide the final answer.");
-        //await mcp.close();
         return res.json({ answer: plan.answer, history });
       }
 

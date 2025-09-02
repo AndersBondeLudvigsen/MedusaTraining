@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState } from "react"
 import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { Container, Heading, Text } from "@medusajs/ui"
+import { ChartRenderer, ChartSpec } from "./ChartRenderer"
 
 const AssistantPage = () => {
   const [prompt, setPrompt] = useState("")
   const [answer, setAnswer] = useState<string | null>(null)
+  const [chart, setChart] = useState<ChartSpec | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -14,7 +16,8 @@ const AssistantPage = () => {
     if (!canSubmit) return
     setLoading(true)
     setAnswer(null)
-    setError(null)
+  setError(null)
+  setChart(null)
     try {
       const res = await fetch("/assistant", {
         method: "POST",
@@ -26,7 +29,13 @@ const AssistantPage = () => {
       if (!res.ok) {
         throw new Error(json?.error || `Request failed with ${res.status}`)
       }
-      setAnswer(json?.answer ?? "")
+      const ans: string = json?.answer ?? ""
+      // Try to extract a ChartSpec JSON from fenced code blocks
+      const chartRes = extractChartSpec(ans)
+      if (chartRes?.spec) {
+        setChart(chartRes.spec)
+      }
+      setAnswer(ans)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -60,6 +69,11 @@ const AssistantPage = () => {
         {error && (
           <div className="text-ui-fg-error">Error: {error}</div>
         )}
+        {chart && (
+          <div className="rounded-md border p-3 bg-ui-bg-base">
+            <ChartRenderer spec={chart} height={300} />
+          </div>
+        )}
         {answer && (
           <div className="whitespace-pre-wrap border-ui-border-base bg-ui-bg-subtle rounded-md border p-3">
             {answer}
@@ -75,3 +89,20 @@ export const config = defineRouteConfig({
 })
 
 export default AssistantPage
+
+// Utilities
+type MaybeChart = { spec?: ChartSpec | null }
+function extractChartSpec(answer: string | null | undefined): MaybeChart {
+  if (!answer) return {}
+  // Try ```json ... ``` or ``` ... ``` blocks
+  const fence = /```(?:json)?\n([\s\S]*?)\n```/i
+  const m = answer.match(fence)
+  if (!m) return {}
+  try {
+    const obj = JSON.parse(m[1])
+    if (obj && obj.type === "chart" && Array.isArray(obj.data)) {
+      return { spec: obj as ChartSpec }
+    }
+  } catch {}
+  return {}
+}
