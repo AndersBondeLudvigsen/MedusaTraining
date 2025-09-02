@@ -189,6 +189,8 @@ export default async function seedDummyOrders({
       });
       logger.info(`Created order with ID: ${order.id}`);
 
+      
+
       // Fetch order detail to get items and payment collections
       const { result: detail } = await getOrderDetailWorkflow(container).run({
         input: {
