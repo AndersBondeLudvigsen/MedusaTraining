@@ -92,7 +92,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
     // The "memory" of our agent, storing the results of each step
     const history: { tool_name: string; tool_args: any; tool_result: any }[] = [];
-    const maxSteps = 5; // A safety limit to prevent infinite loops
+    const maxSteps = 5; 
 
     for (let step = 0; step < maxSteps; step++) {
       console.log(`\n--- 🔄 AGENT LOOP: STEP ${step + 1} ---`);
@@ -122,14 +122,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           tool_result: result,
         });
         
-        // The loop will now continue to the next step with this new information
       } else {
         throw new Error("AI returned an invalid plan. Cannot proceed.");
       }
     }
-
-    // If the loop finishes, it means the task was too complex or got stuck
-    //await mcp.close();
     return res.status(500).json({ 
         error: "The agent could not complete the request within the maximum number of steps.",
         history 

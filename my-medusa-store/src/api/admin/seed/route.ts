@@ -1,7 +1,6 @@
 import { AuthenticatedMedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 
-// Simple body validator
 function parseBody<T = any>(req: AuthenticatedMedusaRequest): T {
   try {
     return (req.body ?? {}) as T
@@ -11,8 +10,6 @@ function parseBody<T = any>(req: AuthenticatedMedusaRequest): T {
 }
 
 // Load a seeder dynamically using CommonJS resolution:
-//  - First try the TypeScript source when running in dev (ts-node)
-//  - Fallback to compiled JavaScript when running from dist
 function loadSeeder(script: string): any {
   try {
     // TS (dev)
