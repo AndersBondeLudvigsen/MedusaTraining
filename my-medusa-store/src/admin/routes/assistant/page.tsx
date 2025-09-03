@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { Container, Heading, Text } from "@medusajs/ui"
 import { ChartRenderer, ChartSpec } from "./ChartRenderer"
@@ -10,6 +10,59 @@ const AssistantPage = () => {
   const [chart, setChart] = useState<ChartSpec | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Persist state so it survives navigation away/back
+  const STORAGE_KEY_PROMPT = "assistant:prompt"
+  const STORAGE_KEY_ANSWER = "assistant:answer"
+  const STORAGE_KEY_CHART = "assistant:chart"
+  useEffect(() => {
+    try {
+      const savedPrompt = localStorage.getItem(STORAGE_KEY_PROMPT)
+      if (savedPrompt) setPrompt(savedPrompt)
+
+      const savedAnswer = localStorage.getItem(STORAGE_KEY_ANSWER)
+      if (savedAnswer) setAnswer(savedAnswer)
+
+      const savedChart = localStorage.getItem(STORAGE_KEY_CHART)
+      if (savedChart) {
+        try {
+          const parsed = JSON.parse(savedChart) as ChartSpec
+          if (parsed && typeof parsed === "object") setChart(parsed)
+        } catch {}
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    try {
+      // Only store non-empty prompts to avoid cluttering storage
+      if (prompt && prompt.trim().length > 0) {
+        localStorage.setItem(STORAGE_KEY_PROMPT, prompt)
+      } else {
+        localStorage.removeItem(STORAGE_KEY_PROMPT)
+      }
+    } catch {}
+  }, [prompt])
+
+  useEffect(() => {
+    try {
+      if (answer && answer.trim().length > 0) {
+        localStorage.setItem(STORAGE_KEY_ANSWER, answer)
+      } else {
+        localStorage.removeItem(STORAGE_KEY_ANSWER)
+      }
+    } catch {}
+  }, [answer])
+
+  useEffect(() => {
+    try {
+      if (chart) {
+        localStorage.setItem(STORAGE_KEY_CHART, JSON.stringify(chart))
+      } else {
+        localStorage.removeItem(STORAGE_KEY_CHART)
+      }
+    } catch {}
+  }, [chart])
 
   const canSubmit = useMemo(() => prompt.trim().length > 0 && !loading, [prompt, loading])
 
@@ -44,6 +97,18 @@ const AssistantPage = () => {
     }
   }, [prompt, canSubmit])
 
+  const onClear = useCallback(() => {
+    setPrompt("")
+    setAnswer(null)
+    setChart(null)
+    setError(null)
+    try {
+      localStorage.removeItem(STORAGE_KEY_PROMPT)
+      localStorage.removeItem(STORAGE_KEY_ANSWER)
+      localStorage.removeItem(STORAGE_KEY_CHART)
+    } catch {}
+  }, [])
+
   return (
     <Container className="divide-y p-0">
       <div className="flex items-center justify-between px-6 py-4">
@@ -72,6 +137,13 @@ const AssistantPage = () => {
           >
             {loading ? "Asking…" : "Ask"}
           </button>
+          <button
+            onClick={onClear}
+            className="rounded-md px-3 py-1.5 border bg-ui-bg-base text-ui-fg-base"
+            disabled={loading}
+          >
+            Clear
+          </button>
         </div>
         {error && (
           <div className="text-ui-fg-error">Error: {error}</div>
@@ -94,6 +166,7 @@ const AssistantPage = () => {
 export const config = defineRouteConfig({
   label: "Promotions Assistant",
   icon: AiAssistent
+
 })
 
 export default AssistantPage
