@@ -87,7 +87,7 @@ async function planNextStepWithGemini(
   tools: McpTool[],
 
   history: { tool_name: string; tool_args: any; tool_result: any }[],
-  modelName = "gemini-2.5-pro"
+  modelName = "gemini-2.5-flash"
 ): Promise<{
   action: "call_tool" | "final_answer";
   tool_name?: string;
