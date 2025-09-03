@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react"
 import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { Container, Heading, Text } from "@medusajs/ui"
 import { ChartRenderer, ChartSpec } from "./ChartRenderer"
+import { AiAssistent } from "@medusajs/icons"
 
 const AssistantPage = () => {
   const [prompt, setPrompt] = useState("")
@@ -92,6 +93,7 @@ const AssistantPage = () => {
 
 export const config = defineRouteConfig({
   label: "Promotions Assistant",
+  icon: AiAssistent
 })
 
 export default AssistantPage

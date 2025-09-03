@@ -2,6 +2,9 @@ import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { Button, Container, Heading, Text } from "@medusajs/ui"
 import { useState } from "react"
 import { sdk } from "../../../lib/sdk"
+import { Sun } from "@medusajs/icons"
+
+
 
 const SeedProductsPage = () => {
   const [loading, setLoading] = useState(false)
@@ -47,9 +50,5 @@ const SeedProductsPage = () => {
   )
 }
 
-export const config = defineRouteConfig({
-  label: "Seed data",
-  nested: "/orders",
-})
-
+export const config = defineRouteConfig({ label: "Seed data", icon: Sun })
 export default SeedProductsPage
