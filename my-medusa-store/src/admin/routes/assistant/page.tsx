@@ -163,7 +163,7 @@ const AssistantPage = () => {
 }
 
 export const config = defineRouteConfig({
-  label: " AI Assistant",
+  label: "AI Assistant",
 })
 
 export default AssistantPage
