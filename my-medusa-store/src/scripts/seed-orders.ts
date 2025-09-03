@@ -1,7 +1,6 @@
 import type { ExecArgs } from "@medusajs/framework/types";
 import { Client as PgClient } from "pg";
 import { createOrderWorkflow, createCustomersWorkflow } from "@medusajs/core-flows";
-// Use core-flows for payment/fulfillment helpers
 import {
   getOrderDetailWorkflow,
   createOrderFulfillmentWorkflow,
@@ -43,23 +42,31 @@ export default async function seedDummyOrders({
   // If no customers exist, create one
   if (!customers.length) {
     logger.info("No customers found. Creating a new customer...");
-    const { result } = await createCustomersWorkflow(container).run({
+    const firstName = faker.person.firstName();
+    const lastName = faker.person.lastName();
+    const email = faker.internet
+      .email({ firstName, lastName, provider: "example.com" })
+      .toLowerCase();
+
+    await createCustomersWorkflow(container).run({
       input: {
-        customersData: [{
-          first_name: "John",
-          last_name: "Doe",
-          email: "john.doe@example.com",
-        }],
+        customersData: [
+          {
+            first_name: firstName,
+            last_name: lastName,
+            email,
+          },
+        ],
       },
     });
     // Re-query customers to align with Query response type
     const requery = (await query.graph({
       entity: "customer",
       fields: ["id", "email"],
-      filters: { email: result[0].email },
+      filters: { email },
     })) as { data: Array<{ id: string; email: string }> };
     customers = requery.data?.length ? requery.data : customers;
-    logger.info(`Successfully created customer with email: ${customers[0].email}`);
+    logger.info(`Successfully created customer with email: ${email}`);
   }
 
   // Get other necessary data
@@ -315,7 +322,7 @@ export default async function seedDummyOrders({
         {
           option_id: shipping_option.id,
           name: shipping_option.name,
-          amount: 1000,
+          amount: 10,
           // data can be set if provider requires it
           data: {},
         }

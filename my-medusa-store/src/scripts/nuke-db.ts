@@ -229,7 +229,14 @@ export default async function nukeAll({ container }: ExecArgs) {
   await step("Delete products (workflow)", async () => {
     if (!catalog.products.length) return
     for (const ids of chunk(catalog.products)) {
-      await deleteProductsWorkflow(container).run({ input: { ids } })
+      const deleteProductsWorkflows = deleteProductsWorkflow(container)
+      try {
+        // Medusa v2 expects { productIds } for product deletion
+        await deleteProductsWorkflows.run({ input: { productIds: ids } as any })
+      } catch (e) {
+        // Fallback for older/alternate signatures that accepted { ids }
+        await deleteProductsWorkflow(container).run({ input: { ids } as any })
+      }
     }
   })
 

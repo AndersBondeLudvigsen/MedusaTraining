@@ -2133,6 +2133,11 @@
   resolved "https://registry.npmjs.org/@medusajs/fulfillment/-/fulfillment-2.9.0.tgz"
   integrity sha512-Tq5WfVhf71Du77NeNq/RvIB8+NSpCQWawuX4rT0K6uOC8FoTdzT0sfyl8M9GnHioINbbiWeLfZYthKxcEEwZGA==
 
+"@medusajs/icons@^2.10.1":
+  version "2.10.1"
+  resolved "https://registry.npmjs.org/@medusajs/icons/-/icons-2.10.1.tgz"
+  integrity sha512-PYotv/QUJ1AxNDz7bLyIOVKoO28Ec03WjDOz1Dkv1oRPNsNivH1iqAlzn453NyWo0elr/S+W3S2MVHQiFFRG2w==
+
 "@medusajs/icons@2.9.0":
   version "2.9.0"
   resolved "https://registry.npmjs.org/@medusajs/icons/-/icons-2.9.0.tgz"

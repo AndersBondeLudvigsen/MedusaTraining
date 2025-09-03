@@ -2,6 +2,9 @@ import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { Button, Container, Heading, Text } from "@medusajs/ui"
 import { useState } from "react"
 import { sdk } from "../../../lib/sdk"
+import { Sun } from "@medusajs/icons"
+
+
 
 const SeedProductsPage = () => {
   const [loading, setLoading] = useState(false)
@@ -38,6 +41,7 @@ const SeedProductsPage = () => {
         <div className="flex flex-wrap gap-2">
           <Button size="small" disabled={loading} onClick={() => runSeed("seed-data")}>Seed products (light)</Button>
           <Button size="small" variant="secondary" disabled={loading} onClick={() => runSeed("seed-orders")}>Seed orders</Button>
+          <Button size="small" variant="secondary" disabled={loading} onClick={() => runSeed("seed-customers")}>Seed customers</Button>
         </div>
         {message && <Text className="text-green-600">{message}</Text>}
         {error && <Text className="text-ui-fg-error">{error}</Text>}
@@ -46,9 +50,5 @@ const SeedProductsPage = () => {
   )
 }
 
-export const config = defineRouteConfig({
-  label: "Seed data",
-  nested: "/orders",
-})
-
+export const config = defineRouteConfig({ label: "Seed data", icon: Sun })
 export default SeedProductsPage
