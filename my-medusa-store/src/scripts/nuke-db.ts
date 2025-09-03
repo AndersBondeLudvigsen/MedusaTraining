@@ -21,6 +21,7 @@ type Flags = {
   dryRun: boolean
   preserveStore: boolean
   preserveUsers: boolean
+  preserveAdmins: boolean
 }
 
 function parseFlags(argv: string[]): Flags {
@@ -35,6 +36,8 @@ function parseFlags(argv: string[]): Flags {
     dryRun: !!process.env.NUKE_DRY_RUN || args.has("--dry-run"),
     preserveStore: !!process.env.NUKE_PRESERVE_STORE || args.has("--preserve-store"),
     preserveUsers: !!process.env.NUKE_PRESERVE_USERS || args.has("--preserve-users"),
+    // Convenience alias: admins are represented by the `user` module in Medusa
+    preserveAdmins: !!process.env.NUKE_PRESERVE_ADMINS || args.has("--preserve-admins"),
   }
 }
 
@@ -68,7 +71,7 @@ export default async function nukeAll({ container }: ExecArgs) {
       "Refusing to run without confirmation. Re-run with --force or set NUKE_ALL=1."
     )
     logger.info(
-      "Optional flags: --dry-run --preserve-store --preserve-users"
+  "Optional flags: --dry-run --preserve-store --preserve-users --preserve-admins"
     )
     return
   }
@@ -228,16 +231,28 @@ export default async function nukeAll({ container }: ExecArgs) {
   // 4) Catalog (products, categories, price lists)
   await step("Delete products (workflow)", async () => {
     if (!catalog.products.length) return
+    const before = catalog.products.length
     for (const ids of chunk(catalog.products)) {
-      const deleteProductsWorkflows = deleteProductsWorkflow(container)
       try {
-        // Medusa v2 expects { productIds } for product deletion
-        await deleteProductsWorkflows.run({ input: { productIds: ids } as any })
+        // Medusa v2.9: expects { ids }
+        await deleteProductsWorkflow(container).run({ input: { ids } })
       } catch (e) {
-        // Fallback for older/alternate signatures that accepted { ids }
-        await deleteProductsWorkflow(container).run({ input: { ids } as any })
+        // Fallback: try module API if workflow signature mismatches
+        const productModule: any = container.resolve(Modules.PRODUCT)
+        if (typeof productModule.softDeleteProducts === "function") {
+          await productModule.softDeleteProducts(ids)
+        } else if (typeof productModule.deleteProducts === "function") {
+          await productModule.deleteProducts(ids)
+        } else {
+          throw e
+        }
       }
     }
+    // Best-effort visibility: re-query count
+    try {
+      const remaining = await listIds(query, "product")
+      console.log(`[nuke] products before=${before} after=${remaining.length}`)
+    } catch {}
   })
 
   await step("Delete product categories (workflow)", async () => {
@@ -285,7 +300,7 @@ export default async function nukeAll({ container }: ExecArgs) {
   })
 
   // 7) Optional: Users and Store
-  if (!flags.preserveUsers) {
+  if (!(flags.preserveUsers || flags.preserveAdmins)) {
     await step("Soft delete users (module)", async () => {
       if (!catalog.users.length) return
       const userModule: any = container.resolve("user")
@@ -300,7 +315,7 @@ export default async function nukeAll({ container }: ExecArgs) {
       }
     })
   } else {
-    logger.info("Preserving users as requested")
+    logger.info("Preserving users/admins as requested")
   }
 
   if (!flags.preserveStore) {
