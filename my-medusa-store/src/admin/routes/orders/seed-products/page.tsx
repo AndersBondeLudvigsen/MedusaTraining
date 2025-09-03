@@ -38,6 +38,7 @@ const SeedProductsPage = () => {
         <div className="flex flex-wrap gap-2">
           <Button size="small" disabled={loading} onClick={() => runSeed("seed-data")}>Seed products (light)</Button>
           <Button size="small" variant="secondary" disabled={loading} onClick={() => runSeed("seed-orders")}>Seed orders</Button>
+          <Button size="small" variant="secondary" disabled={loading} onClick={() => runSeed("seed-customers")}>Seed customers</Button>
         </div>
         {message && <Text className="text-green-600">{message}</Text>}
         {error && <Text className="text-ui-fg-error">{error}</Text>}
