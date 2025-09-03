@@ -235,7 +235,7 @@ export default async function nukeAll({ container }: ExecArgs) {
         await deleteProductsWorkflows.run({ input: { productIds: ids } as any })
       } catch (e) {
         // Fallback for older/alternate signatures that accepted { ids }
-        await deleteProductsWorkflow.run({ input: { ids } as any })
+        await deleteProductsWorkflow(container).run({ input: { ids } as any })
       }
     }
   })
