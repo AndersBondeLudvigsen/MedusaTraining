@@ -16,24 +16,157 @@ const MEDUSA_PASSWORD = process.env.MEDUSA_PASSWORD ?? "medusa_pass";
 export default class MedusaAdminService {
     sdk: Medusa;
     adminToken = "";
+
     constructor() {
         this.sdk = new Medusa({
             baseUrl: MEDUSA_BACKEND_URL,
             debug: process.env.NODE_ENV === "development",
             publishableKey: process.env.NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY,
-            auth: {
-                type: "jwt"
-            }
+            auth: { type: "jwt" },
         });
     }
 
     async init(): Promise<void> {
-        const res = await this.sdk.auth.login("user", "emailpass", {
+        const res = (await this.sdk.auth.login("user", "emailpass", {
             email: MEDUSA_USERNAME,
-            password: MEDUSA_PASSWORD
-        });
-        this.adminToken = res.toString();
+            password: MEDUSA_PASSWORD,
+        })) as any;
+
+        // Prefer explicit token fields; fall back to string if needed.
+        const token =
+            res?.token ?? res?.access_token ?? res?.jwt ?? res?.toString?.();
+        if (typeof token === "string" && token && token !== "[object Object]") {
+            this.adminToken = token;
+        } else {
+            this.adminToken = "";
+        }
     }
+
+    /** Flatten object into bracket-notation query pairs (supports $-operators). */
+    private toBracketParams(
+        obj: Record<string, unknown>,
+        prefix = ""
+    ): [string, string][] {
+        const out: [string, string][] = [];
+        const push = (k: string, v: unknown) => {
+            if (v === undefined || v === null) return;
+            out.push([k, String(v)]);
+        };
+
+        for (const [key, value] of Object.entries(obj)) {
+            const k = prefix ? `${prefix}[${key}]` : key;
+
+            if (value === undefined || value === null) continue;
+
+            if (Array.isArray(value)) {
+                for (const v of value) push(k, v);
+            } else if (typeof value === "object") {
+                out.push(...this.toBracketParams(value as Record<string, unknown>, k));
+            } else {
+                push(k, value);
+            }
+        }
+        return out;
+    }
+
+    private withQuery(path: string, queryObj: Record<string, unknown>): string {
+        const pairs = this.toBracketParams(queryObj);
+        if (pairs.length === 0) return path;
+        const qs = new URLSearchParams(pairs).toString();
+        return path.includes("?") ? `${path}&${qs}` : `${path}?${qs}`;
+    }
+
+    /** Authenticated GET (appends query directly on the URL). */
+    private async adminGet<T = unknown>(
+        path: string,
+        queryObj: Record<string, unknown> = {}
+    ): Promise<T> {
+        const finalPath = this.withQuery(path, queryObj);
+        const res = await this.sdk.client.fetch(finalPath, {
+            method: "get",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+                ...(this.adminToken
+                    ? { Authorization: `Bearer ${this.adminToken}` }
+                    : {}),
+            },
+        });
+        return res as T;
+    }
+
+    // ---------- Utilities for date ranges ----------
+
+    private monthRangeUtc(year: number, month1to12: number) {
+        const mIdx = month1to12 - 1; // JS Date months are 0-based
+        const from = new Date(Date.UTC(year, mIdx, 1, 0, 0, 0, 0));
+        const to = new Date(Date.UTC(year, mIdx + 1, 1, 0, 0, 0, 0));
+        return { fromIso: from.toISOString(), toIso: to.toISOString() };
+    }
+
+    private yearRangeUtc(year: number) {
+        const from = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+        const to = new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0));
+        return { fromIso: from.toISOString(), toIso: to.toISOString() };
+    }
+
+    private inRangeUtc(iso: string, fromIso: string, toIso: string): boolean {
+        const t = Date.parse(iso);
+        return t >= Date.parse(fromIso) && t < Date.parse(toIso);
+    }
+
+    /**
+     * Fetch ALL orders in [fromIso, toIso) (paged). We DO NOT trust server `count`
+     * nor rely on server-side filtering — we also filter client-side by created_at.
+     */
+    private async fetchOrdersInRange(
+        fromIso: string,
+        toIso: string
+    ): Promise<Array<{ id?: string; created_at?: string }>> {
+        const limit = 200;
+        let offset = 0;
+        const acc: Array<{ id?: string; created_at?: string }> = [];
+
+        // Send the filter with $-operators (works across Medusa variants).
+        const baseQuery = {
+            created_at: { $gte: fromIso, $lt: toIso },
+        } as const;
+
+        // If the backend ignores filters, we still filter locally by created_at.
+        while (true) {
+            const q = { ...baseQuery, limit, offset };
+            const data = await this.adminGet<{
+                orders?: Array<{ id?: string; created_at?: string }>;
+            }>("/admin/orders", q);
+
+            const batch = Array.isArray(data?.orders) ? data.orders : [];
+            if (batch.length === 0) break;
+
+            // Local filter to be 100% correct even if server ignores created_at.
+            for (const o of batch) {
+                if (!o?.created_at) continue;
+                if (this.inRangeUtc(o.created_at, fromIso, toIso)) {
+                    acc.push({ id: o.id, created_at: o.created_at });
+                }
+            }
+
+            if (batch.length < limit) break;
+            offset += limit;
+        }
+
+        return acc;
+    }
+
+    /** Count orders in [fromIso, toIso) using client-side filtered list. */
+    private async countOrdersInRange(
+        fromIso: string,
+        toIso: string
+    ): Promise<number> {
+        const orders = await this.fetchOrdersInRange(fromIso, toIso);
+        return orders.length;
+    }
+
+    // ---------- Tool generation (OpenAPI + custom) ----------
 
     wrapPath(
         refPath: string,
@@ -60,6 +193,7 @@ export default class MedusaAdminService {
                 const requiredFields = new Set<string>();
                 const propertyTypes = new Map<string, unknown>();
                 let requestBodySchema: unknown | undefined;
+
                 if (method === "post") {
                     const postBody = (
                         methodShape as unknown as {
@@ -70,10 +204,10 @@ export default class MedusaAdminService {
                     ).requestBody?.content?.["application/json"]?.schema;
                     requestBodySchema = postBody;
                 }
+
                 const collectProps = (schema: unknown): void => {
-                    if (!schema) {
-                        return;
-                    }
+                    if (!schema) return;
+
                     const s = schema as {
                         properties?: Record<string, unknown>;
                         required?: string[];
@@ -82,59 +216,36 @@ export default class MedusaAdminService {
                         anyOf?: unknown[];
                         $ref?: string;
                     };
-                    
-                    // Handle $ref by resolving to the actual schema
+
                     if (s.$ref && typeof s.$ref === "string") {
-                        // Extract the reference path
-                        const refPath = s.$ref.replace(
-                            "#/components/schemas/",
-                            ""
-                        );
+                        const refPath = s.$ref.replace("#/components/schemas/", "");
                         const refSchema = (
                             adminJson as unknown as {
-                                components?: {
-                                    schemas?: Record<string, unknown>;
-                                };
+                                components?: { schemas?: Record<string, unknown> };
                             }
                         ).components?.schemas?.[refPath];
-                        if (refSchema) {
-                            collectProps(refSchema);
-                        }
+                        if (refSchema) collectProps(refSchema);
                         return;
                     }
-                    
-                    // Collect properties
+
                     if (s.properties && typeof s.properties === "object") {
-                        for (const [key, propSchema] of Object.entries(
-                            s.properties
-                        )) {
+                        for (const [key, propSchema] of Object.entries(s.properties)) {
                             bodyKeys.add(key);
                             propertyTypes.set(key, propSchema);
                         }
                     }
-                    
-                    // Collect required fields
+
                     if (Array.isArray(s.required)) {
                         for (const field of s.required) {
-                            if (typeof field === "string") {
-                                requiredFields.add(field);
-                            }
+                            if (typeof field === "string") requiredFields.add(field);
                         }
                     }
-                    
-                    if (Array.isArray(s.allOf)) {
-                        s.allOf.forEach(collectProps);
-                    }
-                    if (Array.isArray(s.oneOf)) {
-                        s.oneOf.forEach(collectProps);
-                    }
-                    if (Array.isArray(s.anyOf)) {
-                        s.anyOf.forEach(collectProps);
-                    }
+
+                    if (Array.isArray(s.allOf)) s.allOf.forEach(collectProps);
+                    if (Array.isArray(s.oneOf)) s.oneOf.forEach(collectProps);
+                    if (Array.isArray(s.anyOf)) s.anyOf.forEach(collectProps);
                 };
-                if (requestBodySchema) {
-                    collectProps(requestBodySchema);
-                }
+                if (requestBodySchema) collectProps(requestBodySchema);
 
                 return {
                     name: `Admin${name}`,
@@ -144,7 +255,7 @@ export default class MedusaAdminService {
                         method
                     )}`,
                     inputSchema: {
-                        // Query and path params
+                        // Query + path params
                         ...parameters
                             .filter((p) => p.in != "header")
                             .reduce((acc, param) => {
@@ -156,69 +267,91 @@ export default class MedusaAdminService {
                                         acc[param.name] = z.number().optional();
                                         break;
                                     case "boolean":
-                                        acc[param.name] = z
-                                            .boolean()
-                                            .optional();
+                                        acc[param.name] = z.boolean().optional();
                                         break;
                                     case "array":
-                                        acc[param.name] = z
-                                            .array(z.any())
-                                            .optional();
+                                        acc[param.name] = z.array(z.any()).optional();
                                         break;
                                     case "object":
-                                        acc[param.name] = z
-                                            .record(z.any())
-                                            .optional();
+                                        acc[param.name] = z.record(z.any()).optional();
                                         break;
                                     default:
                                         acc[param.name] = z.any().optional();
                                 }
                                 return acc;
                             }, {} as Record<string, ZodTypeAny>),
-                        // Generic JSON payload support for non-GET methods
                         ...(method !== "get"
                             ? { payload: z.record(z.any()).optional() }
                             : {}),
-                        // Best-effort top-level body fields to help LLMs choose POST tools
                         ...(method !== "get"
                             ? Array.from(bodyKeys).reduce((acc, key) => {
-                                  const propType = propertyTypes.get(key) as {
-                                      type?: string;
-                                      description?: string;
-                                      example?: unknown;
-                                      items?: { type?: string };
-                                  } | undefined;
-                                  
-                                  // Create more descriptive Zod schemas based on OpenAPI info
-                                  // BUT make them all optional since we provide defaults
-                                  if (propType?.type === "array") {
-                                      if (key === "options") {
-                                          acc[key] = z.array(z.object({
-                                              title: z.string(),
-                                              values: z.array(z.string())
-                                          })).optional().describe("Product options with title and values. Example: [{\"title\": \"Size\", \"values\": [\"S\", \"M\", \"L\"]}]");
-                                      } else {
-                                          acc[key] = z.array(z.any()).optional().describe(propType.description || `Array field: ${key}`);
-                                      }
-                                  } else if (propType?.type === "object") {
-                                      acc[key] = z.record(z.any()).optional().describe(propType.description || `Object field: ${key}. Use empty object {} if no specific data needed.`);
-                                  } else if (propType?.type === "string") {
-                                      acc[key] = z.string().optional().describe(propType.description || `String field: ${key}`);
-                                  } else if (propType?.type === "number") {
-                                      acc[key] = z.number().optional().describe(propType.description || `Number field: ${key}`);
-                                  } else if (propType?.type === "boolean") {
-                                      acc[key] = z.boolean().optional().describe(propType.description || `Boolean field: ${key}`);
-                                  } else {
-                                      acc[key] = z.any().optional().describe(propType?.description || `Field: ${key}`);
-                                  }
-                                  return acc;
-                              }, {} as Record<string, ZodTypeAny>)
-                            : {})
+                                const propType = propertyTypes.get(key) as
+                                    | {
+                                        type?: string;
+                                        description?: string;
+                                        example?: unknown;
+                                        items?: { type?: string };
+                                    }
+                                    | undefined;
+
+                                if (propType?.type === "array") {
+                                    if (key === "options") {
+                                        acc[key] = z
+                                            .array(
+                                                z.object({
+                                                    title: z.string(),
+                                                    values: z.array(z.string()),
+                                                })
+                                            )
+                                            .optional()
+                                            .describe(
+                                                'Product options with title and values. Example: [{"title":"Size","values":["S","M","L"]}]'
+                                            );
+                                    } else {
+                                        acc[key] = z
+                                            .array(z.any())
+                                            .optional()
+                                            .describe(
+                                                propType.description || `Array field: ${key}`
+                                            );
+                                    }
+                                } else if (propType?.type === "object") {
+                                    acc[key] = z
+                                        .record(z.any())
+                                        .optional()
+                                        .describe(
+                                            propType.description ||
+                                            `Object field: ${key}. Use {} if not needed.`
+                                        );
+                                } else if (propType?.type === "string") {
+                                    acc[key] = z
+                                        .string()
+                                        .optional()
+                                        .describe(propType.description || `String field: ${key}`);
+                                } else if (propType?.type === "number") {
+                                    acc[key] = z
+                                        .number()
+                                        .optional()
+                                        .describe(propType.description || `Number field: ${key}`);
+                                } else if (propType?.type === "boolean") {
+                                    acc[key] = z
+                                        .boolean()
+                                        .optional()
+                                        .describe(
+                                            propType.description || `Boolean field: ${key}`
+                                        );
+                                } else {
+                                    acc[key] = z
+                                        .any()
+                                        .optional()
+                                        .describe(propType?.description || `Field: ${key}`);
+                                }
+                                return acc;
+                            }, {} as Record<string, ZodTypeAny>)
+                            : {}),
                     },
 
-                    handler: async (
-                        input: Record<string, unknown>
-                    ): Promise<unknown> => {
+                    handler: async (input: Record<string, unknown>): Promise<unknown> => {
                         // Separate params by location
                         const pathParams = parameters
                             .filter((p) => p.in === "path")
@@ -227,160 +360,87 @@ export default class MedusaAdminService {
                             .filter((p) => p.in === "query")
                             .map((p) => p.name);
 
-                        // Build final path by replacing {param} occurrences
+                        // Build final path by replacing {param}
                         let finalPath = refPath;
                         for (const pName of pathParams) {
-                            const val = (input as Record<string, unknown>)[
-                                pName
-                            ];
-                            if (val === undefined || val === null) {
-                                continue;
-                            }
+                            const val = (input as Record<string, unknown>)[pName];
+                            if (val === undefined || val === null) continue;
                             finalPath = finalPath.replace(
                                 new RegExp(`\\{${pName}\\}`, "g"),
                                 encodeURIComponent(String(val))
                             );
                         }
 
-                        // Build body from provided payload plus non-path, non-query inputs
-                        const basePayloadRaw = (
-                            input as Record<string, unknown>
-                        )["payload"];
+                        // Build body from non-path/query inputs
+                        const basePayloadRaw = (input as Record<string, unknown>)[
+                            "payload"
+                        ];
                         let initialBody: Record<string, unknown> = {};
                         if (
                             basePayloadRaw &&
                             typeof basePayloadRaw === "object" &&
                             !Array.isArray(basePayloadRaw)
                         ) {
-                            initialBody = {
-                                ...(basePayloadRaw as Record<string, unknown>)
-                            };
+                            initialBody = { ...(basePayloadRaw as Record<string, unknown>) };
                         }
-                        const body = Object.entries(input).reduce(
-                            (acc, [key, value]) => {
-                                if (
-                                    pathParams.includes(key) ||
-                                    queryParamNames.includes(key) ||
-                                    key === "payload"
-                                ) {
-                                    return acc;
-                                }
-                                if (value === undefined) {
-                                    return acc;
-                                }
-                                (acc as Record<string, unknown>)[key] =
-                                    value as unknown;
+                        const body = Object.entries(input).reduce((acc, [key, value]) => {
+                            if (
+                                pathParams.includes(key) ||
+                                queryParamNames.includes(key) ||
+                                key === "payload"
+                            )
                                 return acc;
-                            },
-                            initialBody
-                        );
+                            if (value === undefined) return acc;
+                            (acc as Record<string, unknown>)[key] = value as unknown;
+                            return acc;
+                        }, initialBody);
 
-                        // Schema-driven required field handling
-                        if (method === "post" && requiredFields.size > 0) {
-                            for (const requiredField of requiredFields) {
-                                const fieldValue = body[requiredField];
-                                const isFieldMissing = fieldValue === undefined || 
-                                                     fieldValue === null || 
-                                                     (Array.isArray(fieldValue) && fieldValue.length === 0);
-                                
-                                if (isFieldMissing) {
-                                    // Get the property type information
-                                    const propType = propertyTypes.get(requiredField) as {
-                                        type?: string;
-                                        items?: unknown;
-                                        example?: unknown;
-                                        default?: unknown;
-                                    } | undefined;
-                                    
-                                    // Provide defaults based on schema type information
-                                    if (propType?.type === "object") {
-                                        body[requiredField] = propType.default ?? {};
-                                    } else if (propType?.type === "array") {
-                                        // For arrays, check if we have example data
-                                        if (propType.example) {
-                                            body[requiredField] = propType.example;
-                                        } else if (requiredField === "options") {
-                                            // Special case for product options - use schema knowledge
-                                            body[requiredField] = [
-                                                {
-                                                    title: "Default option",
-                                                    values: ["Default value"]
-                                                }
-                                            ];
-                                        } else {
-                                            body[requiredField] = [];
-                                        }
-                                    } else if (propType?.type === "string") {
-                                        body[requiredField] = propType.default ?? "";
-                                    } else if (propType?.type === "number") {
-                                        body[requiredField] = propType.default ?? 0;
-                                    } else if (propType?.type === "boolean") {
-                                        body[requiredField] = propType.default ?? false;
-                                    }
-                                    // If we don't know the type, skip it - don't guess
-                                }
-                            }
-                        }
-
-                        // Build query from declared query params only
-                        const queryEntries: [string, string][] = [];
+                        // Query object from declared query params only
+                        const queryObj: Record<string, unknown> = {};
                         for (const [key, value] of Object.entries(input)) {
-                            if (!queryParamNames.includes(key)) {
-                                continue;
-                            }
-                            if (value === undefined || value === null) {
-                                continue;
-                            }
-                            if (Array.isArray(value)) {
-                                for (const v of value) {
-                                    queryEntries.push([key, String(v)]);
-                                }
-                            } else if (typeof value === "object") {
-                                queryEntries.push([key, JSON.stringify(value)]);
-                            } else {
-                                queryEntries.push([key, String(value)]);
-                            }
+                            if (!queryParamNames.includes(key)) continue;
+                            if (value === undefined || value === null) continue;
+                            queryObj[key] = value;
                         }
-                        const query = new URLSearchParams(queryEntries);
+
+                        if (Object.keys(queryObj).length > 0) {
+                            finalPath = this.withQuery(finalPath, queryObj);
+                        }
+
                         if (method === "get") {
-                            const response = await this.sdk.client.fetch(
-                                finalPath,
-                                {
-                                    method: method,
-                                    headers: {
-                                        "Content-Type": "application/json",
-                                        "Accept": "application/json",
-                                        "Authorization": `Bearer ${this.adminToken}`
-                                    },
-                                    query
-                                }
-                            );
-                            return response;
-                        }
-                        const response = await this.sdk.client.fetch(
-                            finalPath,
-                            {
+                            const response = await this.sdk.client.fetch(finalPath, {
                                 method: method,
                                 headers: {
                                     "Content-Type": "application/json",
-                                    "Accept": "application/json",
-                                    "Authorization": `Bearer ${this.adminToken}`
+                                    Accept: "application/json",
+                                    ...(this.adminToken
+                                        ? { Authorization: `Bearer ${this.adminToken}` }
+                                        : {}),
                                 },
-                                body
-                            }
-                        );
+                            });
+                            return response;
+                        }
+
+                        const response = await this.sdk.client.fetch(finalPath, {
+                            method: method,
+                                headers: {
+                                "Content-Type": "application/json",
+                                Accept: "application/json",
+                                ...(this.adminToken
+                                    ? { Authorization: `Bearer ${this.adminToken}` }
+                                    : {}),
+                            },
+                            body,
+                        });
                         return response;
-                    }
+                    },
                 };
             });
         };
 
         if ((refFunction as unknown as { get?: MethodShape }).get) {
             tools.push(
-                buildTool(
-                    "get",
-                    (refFunction as unknown as { get: MethodShape }).get
-                )
+                buildTool("get", (refFunction as unknown as { get: MethodShape }).get)
             );
         }
         if ((refFunction as unknown as { post?: MethodShape }).post) {
@@ -405,29 +465,88 @@ export default class MedusaAdminService {
 
     private generateUsageHint(
         operationId: string,
-        methodShape: Record<string, unknown>,
+        _methodShape: Record<string, unknown>,
         method: string
     ): string {
-        // Provide specific guidance for common operations
         if (method === "post") {
             if (operationId.includes("Batch")) {
                 return " **BATCH OPERATION**: Only use this for bulk operations with multiple items. Requires arrays: create[], update[], delete[]. For single operations, use the non-batch version.";
             }
-            
             if (operationId.includes("PostProducts")) {
-                return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title": "Product Name", "options": [{"title": "Size", "values": ["S", "M", "L"]}]}';
+                return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title": "Product Name", "options": [{"title": "Size", "values": ["S","M","L"]}]}';
             }
-            
             if (operationId.includes("PostCustomers")) {
                 return " **REQUIRED**: email (string). Optional: first_name, last_name, phone. Do not provide metadata as string.";
             }
-            
             if (operationId.includes("Inventory")) {
                 return " **INVENTORY**: Use for stock management. Requires location_id, inventory_item_id, stocked_quantity.";
             }
         }
-        
         return "";
+    }
+
+    /**
+     * Custom tool: getMonthlyOrderReport
+     * - If month provided → single month count.
+     * - Else → fetch the whole YEAR once, then group client-side by month.
+     * - All comparisons use UTC.
+     */
+    private defineReportTools(): Array<ReturnType<typeof defineTool>> {
+        const getMonthlyOrderReport = defineTool((z) => ({
+            name: "getMonthlyOrderReport",
+            description:
+                "Returns order counts grouped by month for a given year. Optionally pass a month (1-12) to get only that month's count. Uses created_at timestamps (UTC).",
+            inputSchema: {
+                year: z.number().int().min(2000).max(9999),
+                month: z.number().int().min(1).max(12).optional(),
+            },
+            handler: async (input: Record<string, unknown>): Promise<unknown> => {
+                const schema = z.object({
+                    year: z.number().int().min(2000).max(9999),
+                    month: z.number().int().min(1).max(12).optional(),
+                });
+                const parsed = schema.safeParse(input);
+                if (!parsed.success) {
+                    throw new Error(`Invalid input: ${parsed.error.message}`);
+                }
+                const { year, month } = parsed.data;
+
+                if (typeof month === "number") {
+                    const { fromIso, toIso } = this.monthRangeUtc(year, month);
+                    const count = await this.countOrdersInRange(fromIso, toIso);
+                    return {
+                        scope: "month",
+                        year,
+                        month,
+                        from: fromIso,
+                        to: toIso,
+                        count,
+                    };
+                }
+
+                // Fetch the whole year's orders ONCE, then group by month client-side.
+                const { fromIso: yearFrom, toIso: yearTo } = this.yearRangeUtc(year);
+                const orders = await this.fetchOrdersInRange(yearFrom, yearTo);
+
+                const counts = new Array(12).fill(0);
+                for (const o of orders) {
+                    if (!o?.created_at) continue;
+                    const d = new Date(o.created_at);
+                    const m = d.getUTCMonth(); // 0..11
+                    counts[m] += 1;
+                }
+
+                const monthly = counts.map((n, i) => {
+                    const { fromIso, toIso } = this.monthRangeUtc(year, i + 1);
+                    return { month: i + 1, from: fromIso, to: toIso, count: n };
+                });
+
+                const total = counts.reduce((a, b) => a + b, 0);
+                return { scope: "year", year, total, monthly };
+            },
+        }));
+
+        return [getMonthlyOrderReport];
     }
 
     defineTools(admin = adminJson): Array<ReturnType<typeof defineTool>> {
@@ -437,6 +556,7 @@ export default class MedusaAdminService {
             const ts = this.wrapPath(path, refFunction);
             tools.push(...ts);
         });
+        tools.push(...this.defineReportTools());
         return tools;
     }
 }
