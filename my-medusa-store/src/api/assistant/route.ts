@@ -93,10 +93,10 @@ function normalizeToolArgs(input: any): any {
   return walk(input);
 }
 
-/* ---------------- Chart building (generic-first, tiny registry for specials) ---------------- */
+/* ---------------- Chart building (generic only + child-objects) ---------------- */
 
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const X_PRIORITIES = ["month","label","date","day","bucket","name","email","id"];
+const X_PRIORITIES = ["month","label","date","day","bucket","name","email","id","year"];
 const Y_PRIORITIES = ["count","total","amount","revenue","value","quantity","orders","customers","items","sum","avg","median","min","max"];
 
 const isObj = (v: any): v is Record<string, unknown> =>
@@ -138,10 +138,7 @@ function coerceChartSpec(payload: any): ChartSpec | undefined {
   return undefined;
 }
 
-/** If a tool returns a generic series, use it. Supports:
- *  - { series:[{ x, y }], xKey?: "...", yKey?: "...", title?: "..." }
- *  - { series:[{ label, count }] } (xKey defaults to "label", yKey to "count")
- */
+/** If a tool returns a neutral series, use it. */
 function chartFromSeries(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
   const series = Array.isArray(payload?.series) ? payload.series : undefined;
   if (!series || !series.length || !isObj(series[0])) return undefined;
@@ -170,6 +167,51 @@ function chartFromSeries(payload: any, chartType: ChartType, title?: string): Ch
   };
 }
 
+/** NEW: generic-from-child-objects.
+ * Looks for multiple child objects each with a numeric metric key (from Y_PRIORITIES).
+ * Builds a series using a common y-key and a reasonable x label per child.
+ */
+function chartFromChildObjects(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
+  if (!isObj(payload)) return undefined;
+
+  // Collect child objects directly under payload (ignore arrays/primatives)
+  const entries = Object.entries(payload)
+    .filter(([_, v]) => isObj(v)) as [string, Record<string, any>][];
+  if (entries.length < 2 || entries.length > 24) return undefined;
+
+  // Find a y-key that is numeric in most children
+  let chosenY: string | undefined;
+  for (const y of Y_PRIORITIES) {
+    const hits = entries.filter(([_, obj]) => typeof obj[y] === "number").length;
+    if (hits >= Math.max(2, Math.ceil(entries.length / 2))) {
+      chosenY = y;
+      break;
+    }
+  }
+  if (!chosenY) return undefined;
+
+  // Determine x label per child: prefer label/name/month/year; else the child key
+  const rows = entries
+    .map(([key, obj]) => {
+      let label: string | number | undefined =
+        obj.label ?? obj.name ?? (obj.month != null ? monthify("month", obj.month) : undefined) ?? obj.year;
+      if (label == null) label = key; // fallback to entry key
+      const yVal = typeof obj[chosenY!] === "number" ? obj[chosenY!] : Number(obj[chosenY!]) || 0;
+      return { label, [chosenY!]: yVal };
+    });
+
+  if (!rows.length) return undefined;
+
+  return {
+    type: "chart",
+    chart: chartType,
+    title: title ?? "Results",
+    xKey: "label",
+    yKey: chosenY,
+    data: rows,
+  };
+}
+
 /** Generic fallback: root count OR any array of objects. */
 function genericChartFromPayload(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
   if (typeof payload?.count === "number") {
@@ -183,6 +225,11 @@ function genericChartFromPayload(payload: any, chartType: ChartType, title?: str
     };
   }
 
+  // Try child-objects pattern (e.g., { a:{year, count}, b:{year, count} })
+  const fromChildren = chartFromChildObjects(payload, chartType, title);
+  if (fromChildren) return fromChildren;
+
+  // Try any array of objects anywhere
   const arr = findArrayOfObjects(payload);
   if (Array.isArray(arr) && arr.length) {
     const first = arr[0] as Record<string, any>;
@@ -207,54 +254,10 @@ function genericChartFromPayload(payload: any, chartType: ChartType, title?: str
   return undefined;
 }
 
-/** Tiny registry for the very few shapes that benefit from a nicer chart than the generic one. */
-type Mapper = (payload: any, chartType: ChartType, title?: string) => ChartSpec | undefined;
-const SHAPE_MAPPERS: Record<string, Mapper> = {
-  // compareMonthlyYoY: provide 2 bars (prev vs current) instead of generic nothing
-  month_yoy: (payload, chartType, title) => {
-    if (
-      typeof payload?.month === "number" &&
-      typeof payload?.a?.year === "number" && typeof payload?.a?.count === "number" &&
-      typeof payload?.b?.year === "number" && typeof payload?.b?.count === "number"
-    ) {
-      const monthName = MONTHS_SHORT[(payload.month - 1 + 12) % 12];
-      const data = [
-        { label: String(payload.b.year), count: payload.b.count },
-        { label: String(payload.a.year), count: payload.a.count },
-      ];
-      return {
-        type: "chart",
-        chart: chartType,
-        title: title ?? `${monthName} YoY (${payload.b.year} vs ${payload.a.year})`,
-        xKey: "label",
-        yKey: "count",
-        data,
-      };
-    }
-    return undefined;
-  },
-  // getYoYDrops: chart deltas by month
-  yoy_drops: (payload, chartType, title) => {
-    if (!Array.isArray(payload?.details)) return undefined;
-    const rows = payload.details
-      .filter((d: any) => typeof d?.month === "number" && typeof d?.delta === "number")
-      .map((d: any) => ({ month: MONTHS_SHORT[(d.month - 1 + 12) % 12], delta: d.delta as number }));
-    return {
-      type: "chart",
-      chart: chartType,
-      title: title ?? `YoY Δ by Month (${payload.previousYear}→${payload.yearCurrent})`,
-      xKey: "month",
-      yKey: "delta",
-      data: rows,
-    };
-  },
-};
-
 /** Build chart from the most recent tool payload:
  *  1) honor payload.chart if present
  *  2) use payload.series if present
- *  3) apply a small shape-specific mapper if scope matches
- *  4) generic fallback (root count / array of objects)
+ *  3) generic fallback (root count / child objects / array of objects)
  */
 function buildChartFromLatestTool(
   history: HistoryEntry[],
@@ -272,12 +275,6 @@ function buildChartFromLatestTool(
 
     const fromSeries = chartFromSeries(payload, chartType, title);
     if (fromSeries) return fromSeries;
-
-    const mapper = typeof payload?.scope === "string" ? SHAPE_MAPPERS[payload.scope] : undefined;
-    if (mapper) {
-      const mapped = mapper(payload, chartType, title);
-      if (mapped) return mapped;
-    }
 
     const generic = genericChartFromPayload(payload, chartType, title);
     if (generic) return generic;
@@ -319,7 +316,7 @@ async function planNextStepWithGemini(
     `1) If you need information or must perform an action, choose 'call_tool'.\n` +
     `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n` +
     `${chartDirective}\n\n` +
-    `Always retrieve real data via the most relevant tool (Admin* list endpoints or custom tools like getMonthlyOrderReport / compareMonthlyYoY / getYoYDrops).\n` +
+    `Always retrieve real data via the most relevant tool (Admin* list endpoints or custom tools).\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
     `JSON to call a tool: {"action":"call_tool","tool_name":"string","tool_args":object}\n` +
     `JSON for the final answer: {"action":"final_answer","answer":"string"}`;
