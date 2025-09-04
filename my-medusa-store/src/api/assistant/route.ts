@@ -368,7 +368,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const availableTools: McpTool[] = (tools.tools ?? []) as any;
 
     const history: HistoryEntry[] = [];
-    const maxSteps = 5;
+    const maxSteps = 11;
 
     for (let step = 0; step < maxSteps; step++) {
       console.log(`\n--- 🔄 AGENT LOOP: STEP ${step + 1} ---`);
