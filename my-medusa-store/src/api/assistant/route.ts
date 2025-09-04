@@ -34,16 +34,12 @@ function stripJsonFences(text: string): string {
   return m ? m[1] : text;
 }
 
-// Try hard to parse JSON from a string that might contain extra text or code fences
 function safeParseJSON(maybeJson: unknown): any | undefined {
   if (typeof maybeJson !== "string") return undefined;
   const stripped = stripJsonFences(maybeJson).trim();
-
-  // Find the first '{' and last '}' to be resilient to wrappers
   const first = stripped.indexOf("{");
   const last = stripped.lastIndexOf("}");
   if (first === -1 || last === -1 || last < first) return undefined;
-
   const candidate = stripped.slice(first, last + 1);
   try {
     return JSON.parse(candidate);
@@ -54,15 +50,13 @@ function safeParseJSON(maybeJson: unknown): any | undefined {
 
 // Extract a JSON payload (if any) from an MCP tool result
 function extractToolJsonPayload(toolResult: any): any | undefined {
-  // Common MCP result shape seen in your logs:
-  // { content: [ { type: "text", text: "{...json...}" } ], isError?: boolean }
   try {
     const textItem = toolResult?.content?.find?.((c: any) => c?.type === "text");
     if (textItem?.text) {
       const parsed = safeParseJSON(textItem.text);
       if (parsed) return parsed;
     }
-  } catch { /* ignore */ }
+  } catch {}
   return undefined;
 }
 
@@ -97,7 +91,6 @@ function normalizeToolArgs(input: any): any {
 
   const walk = (val: any, keyPath: string[] = []): any => {
     if (Array.isArray(val)) {
-      // fields: ["a","b"] -> "a,b"
       const lastKey = keyPath[keyPath.length - 1];
       if (lastKey === "fields") {
         return val.map(String).join(",");
@@ -113,7 +106,6 @@ function normalizeToolArgs(input: any): any {
       }
       return out;
     }
-    // Special-case common numeric query params
     const last = keyPath[keyPath.length - 1];
     if (last === "limit" || last === "offset") {
       return toNumberIfNumericString(val);
@@ -124,9 +116,99 @@ function normalizeToolArgs(input: any): any {
   return walk(input);
 }
 
+// ---------- Generic chart helpers ----------
+
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const X_PRIORITIES = ["month","label","date","day","bucket","name","email","id"];
+const Y_PRIORITIES = ["count","total","amount","revenue","value","quantity","orders","customers","items","sum","avg","median","min","max"];
+
+function isPlainObject(v: any): v is Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v);
+}
+
+// Depth-first search for first array of objects
+function findArrayOfObjects(node: any, depth = 0): any[] | undefined {
+  if (depth > 4) return undefined; // keep it cheap
+  if (Array.isArray(node) && node.length && isPlainObject(node[0])) return node;
+  if (!isPlainObject(node)) return undefined;
+  for (const v of Object.values(node)) {
+    const found = findArrayOfObjects(v, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function monthLabelMaybe(key: string, value: any): string | number {
+  if (key === "month" && typeof value === "number" && value >= 1 && value <= 12) {
+    return MONTHS_SHORT[(value - 1 + 12) % 12];
+  }
+  return value as any;
+}
+
+function pickKeysFromRow(row: Record<string, any>) {
+  // prefer priorities; otherwise first string-like for X and first numeric for Y
+  let xKey = X_PRIORITIES.find((k) => k in row && (typeof row[k] === "string" || typeof row[k] === "number"));
+  let yKey = Y_PRIORITIES.find((k) => k in row && typeof row[k] === "number");
+
+  if (!xKey) {
+    xKey = Object.keys(row).find((k) => typeof row[k] === "string" || typeof row[k] === "number");
+  }
+  if (!yKey) {
+    yKey = Object.keys(row).find((k) => typeof row[k] === "number" && k !== xKey);
+  }
+  return { xKey, yKey };
+}
+
+function buildGenericChartFromPayload(
+  payload: any,
+  chartType: ChartType,
+  title?: string
+): ChartSpec | undefined {
+  // Case A: root count -> single bar
+  if (typeof payload?.count === "number") {
+    return {
+      type: "chart",
+      chart: chartType,
+      title: title ?? "Total",
+      xKey: "label",
+      yKey: "count",
+      data: [{ label: "Total", count: payload.count }],
+    };
+  }
+
+  // Case B: any array of objects
+  const arr = findArrayOfObjects(payload);
+  if (Array.isArray(arr) && arr.length) {
+    const first = arr[0] as Record<string, any>;
+    const { xKey, yKey } = pickKeysFromRow(first);
+    if (!xKey || !yKey) return undefined;
+
+    // small cap to keep the chart readable
+    const rows = arr.slice(0, 24).map((r) => ({
+      [xKey]: monthLabelMaybe(xKey, r[xKey]),
+      [yKey]: typeof r[yKey] === "number" ? r[yKey] : Number(r[yKey]) || 0,
+    }));
+
+    return {
+      type: "chart",
+      chart: chartType,
+      title: title ?? "Results",
+      xKey,
+      yKey,
+      data: rows,
+    };
+  }
+
+  return undefined;
+}
+
 /**
- * Build a ChartSpec from known tool-result shapes.
- * Currently supports: getMonthlyOrderReport (scope: "year" | "month" with monthly array)
+ * Build a ChartSpec from known tool-result shapes, with a GENERIC fallback.
+ * Supports:
+ *  - getMonthlyOrderReport (scope: "year" | "month")
+ *  - compareMonthlyYoY (scope: "month_yoy")
+ *  - getYoYDrops (scope: "yoy_drops")
+ *  - Generic fallback: root {count} or any array of objects
  */
 function buildChartFromLatestTool(
   history: HistoryEntry[],
@@ -134,25 +216,21 @@ function buildChartFromLatestTool(
 ): ChartSpec | undefined {
   if (!history.length) return undefined;
 
-  // Find the last *successful* tool result that contains a JSON payload we recognize
   for (let i = history.length - 1; i >= 0; i--) {
     const entry = history[i];
     const payload = extractToolJsonPayload(entry.tool_result);
     if (!payload) continue;
 
-    // Case 1: getMonthlyOrderReport year result
-    // { scope: "year", year, total, monthly: [{ month: 1..12, count, from, to }, ...] }
+    // ---- Specific: getMonthlyOrderReport (year) ----
     if (
       payload?.scope === "year" &&
       Array.isArray(payload?.monthly) &&
-      payload?.monthly.every((m: any) => typeof m?.month === "number" && typeof m?.count === "number")
+      payload.monthly.every((m: any) => typeof m?.month === "number" && typeof m?.count === "number")
     ) {
-      const monthsShort = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       const data = payload.monthly.map((m: any) => ({
-        month: monthsShort[(m.month - 1 + 12) % 12],
+        month: MONTHS_SHORT[(m.month - 1 + 12) % 12],
         count: m.count,
       }));
-
       return {
         type: "chart",
         chart: opts.chartType ?? "bar",
@@ -163,11 +241,9 @@ function buildChartFromLatestTool(
       };
     }
 
-    // Case 2: getMonthlyOrderReport month-only result
-    // { scope: "month", year, month, count, ... }
+    // ---- Specific: getMonthlyOrderReport (month) ----
     if (payload?.scope === "month" && typeof payload?.count === "number" && typeof payload?.month === "number") {
-      const monthsShort = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const label = `${monthsShort[(payload.month - 1 + 12) % 12]} ${payload.year}`;
+      const label = `${MONTHS_SHORT[(payload.month - 1 + 12) % 12]} ${payload.year}`;
       return {
         type: "chart",
         chart: opts.chartType ?? "bar",
@@ -178,16 +254,66 @@ function buildChartFromLatestTool(
       };
     }
 
-    // You can extend here to support compareMonthlyYoY / getYoYDrops, etc.
+    // ---- Specific: compareMonthlyYoY ----
+    if (
+      payload?.scope === "month_yoy" &&
+      typeof payload?.month === "number" &&
+      payload?.a && payload?.b &&
+      typeof payload?.a?.year === "number" &&
+      typeof payload?.b?.year === "number" &&
+      typeof payload?.a?.count === "number" &&
+      typeof payload?.b?.count === "number"
+    ) {
+      const monthName = MONTHS_SHORT[(payload.month - 1 + 12) % 12];
+      const data = [
+        { label: String(payload.b.year), count: payload.b.count },
+        { label: String(payload.a.year), count: payload.a.count },
+      ];
+      return {
+        type: "chart",
+        chart: opts.chartType ?? "bar",
+        title: opts.title ?? `${monthName} YoY (${payload.b.year} vs ${payload.a.year})`,
+        xKey: "label",
+        yKey: "count",
+        data,
+      };
+    }
+
+    // ---- Specific: getYoYDrops ----
+    if (
+      payload?.scope === "yoy_drops" &&
+      typeof payload?.yearCurrent === "number" &&
+      Array.isArray(payload?.details)
+    ) {
+      const rows = payload.details
+        .filter((d: any) => typeof d?.month === "number" && typeof d?.delta === "number")
+        .map((d: any) => ({
+          month: MONTHS_SHORT[(d.month - 1 + 12) % 12],
+          delta: d.delta as number,
+        }));
+      const title =
+        opts.title ?? `YoY Δ by Month (${payload.previousYear}→${payload.yearCurrent})`;
+      return {
+        type: "chart",
+        chart: opts.chartType ?? "bar",
+        title,
+        xKey: "month",
+        yKey: "delta",
+        data: rows,
+      };
+    }
+
+    // ---- Generic fallback ----
+    const generic = buildGenericChartFromPayload(payload, opts.chartType ?? "bar", opts.title);
+    if (generic) return generic;
   }
 
   return undefined;
 }
 
 /**
- * The AI's "brain". It plans the next step based on the user's goal and the history of previous actions.
- * IMPORTANT: We no longer force the model to output chart JSON. We pass a `wantsChart` hint,
- * but charts are rendered server-side from tool results.
+ * The AI's "brain". We don't ask the model to emit chart JSON.
+ * Charts are built server-side from tool results.
  */
 async function planNextStepWithGemini(
   userPrompt: string,
@@ -212,29 +338,26 @@ async function planNextStepWithGemini(
   }));
 
   const chartDirective = wantsChart
-    ? "The user interface will render any charts. Do NOT produce chart JSON yourself—just obtain the correct data via tools, then summarize the results succinctly."
+    ? "The UI will render charts. Do NOT produce chart JSON—call tools to get accurate data and summarize."
     : "Do NOT include any chart/graph JSON. Provide a concise textual result only. If data is needed, call the right tool.";
 
   const instruction =
-    `You are a reasoning agent for an e-commerce backend. Your goal is to accomplish the user's request by calling tools in sequence.\n` +
-    `You have two possible actions: 'call_tool' or 'final_answer'.\n\n` +
-    `1) If you need more information or need to perform an action, choose 'call_tool'.\n` +
-    `2) If you have successfully completed the user's request, choose 'final_answer' and provide a concise summary.\n\n` +
+    `You are a reasoning agent for an e-commerce backend. Decide the next step based on the user's goal and tool-call history.\n` +
+    `Actions: 'call_tool' or 'final_answer'.\n\n` +
+    `1) If you need information or must perform an action, choose 'call_tool'.\n` +
+    `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n` +
     `${chartDirective}\n\n` +
-    `Always retrieve real data by calling the most relevant tool(s) based on the user's goal (e.g., Admin* list endpoints or custom report tools like getMonthlyOrderReport).\n` +
-    `If the user asks for monthly counts for a given year, prefer calling getMonthlyOrderReport with {"year": YYYY}.\n` +
+    `Always retrieve real data via the most relevant tool (e.g., Admin* list endpoints or custom tools like getMonthlyOrderReport / compareMonthlyYoY / getYoYDrops).\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
-    `JSON for calling a tool:\n` +
-    `{"action": "call_tool", "tool_name": "string", "tool_args": object}\n\n` +
-    `JSON for providing the final answer:\n` +
-    `{"action": "final_answer", "answer": "string"}`;
+    `JSON for calling a tool:\n{"action":"call_tool","tool_name":"string","tool_args":object}\n\n` +
+    `JSON for final answer:\n{"action":"final_answer","answer":"string"}`;
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 
   const promptText = [
     instruction,
     `Tool Catalog (JSON):\n${JSON.stringify(toolCatalog, null, 2)}`,
-    `History of previous steps (this will be empty on the first turn):\n${JSON.stringify(history, null, 2)}`,
+    `History of previous steps:\n${JSON.stringify(history, null, 2)}`,
     `User's ultimate goal: ${userPrompt}`,
     `Respond with ONLY the JSON object for the next action.`,
   ].join("\n\n");
@@ -256,8 +379,8 @@ async function planNextStepWithGemini(
 }
 
 /**
- * This is the main API endpoint. It uses an agent loop to handle multi-step tasks.
- * New: supports { wantsChart?: boolean, chartType?: "bar"|"line", chartTitle?: string } in POST body.
+ * Main API endpoint.
+ * Supports { wantsChart?: boolean, chartType?: "bar"|"line", chartTitle?: string } in POST body.
  */
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   try {
@@ -281,14 +404,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const tools = await mcp.listTools();
     const availableTools: McpTool[] = (tools.tools ?? []) as any;
 
-    // The "memory" of our agent, storing the results of each step
     const history: HistoryEntry[] = [];
     const maxSteps = 5;
 
     for (let step = 0; step < maxSteps; step++) {
       console.log(`\n--- 🔄 AGENT LOOP: STEP ${step + 1} ---`);
 
-      // 1. Ask the AI to plan the next step based on the full history
       const plan = await planNextStepWithGemini(
         prompt,
         availableTools,
@@ -297,11 +418,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         wantsChart
       );
 
-      // 2. Decide what to do based on the AI's planned action
       if (plan.action === "final_answer") {
         console.log("✅ AI decided to provide the final answer.");
 
-        // Optionally synthesize a chart from the most recent tool result
         let chart: ChartSpec | undefined = undefined;
         if (wantsChart) {
           chart = buildChartFromLatestTool(history, {
@@ -310,7 +429,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           });
         }
 
-        // Return both the model's textual answer and (optionally) our chart + raw latest data
         const latestPayload = extractToolJsonPayload(history[history.length - 1]?.tool_result);
         return res.json({
           answer: plan.answer,
@@ -324,7 +442,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         console.log(`🧠 AI wants to call tool: ${plan.tool_name}`);
         console.log(`   With args: ${JSON.stringify(plan.tool_args)}`);
 
-        // 3. Execute the chosen tool
         const normalizedArgs = normalizeToolArgs(plan.tool_args);
         if (JSON.stringify(normalizedArgs) !== JSON.stringify(plan.tool_args)) {
           console.log(`   Normalized args: ${JSON.stringify(normalizedArgs)}`);
@@ -334,7 +451,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           `   Tool Result: ${JSON.stringify(result).substring(0, 200)}...`
         );
 
-        // 4. Update the history with the outcome of the action
         history.push({
           tool_name: plan.tool_name,
           tool_args: normalizedArgs,
