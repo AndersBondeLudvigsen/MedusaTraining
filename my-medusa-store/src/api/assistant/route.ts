@@ -128,6 +128,8 @@ async function planNextStepWithGemini(
     `Notes: chart is either "bar" or "line". xKey is the x-axis field name in each data row. yKey is the numeric y-axis field name.\n` +
     `Example: For daily counts, use chart="bar", xKey="date", yKey="count", data=[{"date":"2025-09-01","count":12}, ...].\n` +
     `When a chart is requested, you MUST retrieve real data by calling the most relevant tool based on the user's goal (e.g. Admin* list endpoints).\n` +
+    `If the user asks for monthly counts for a given year (e.g. "How many orders do I have in 2025, grouped by month"), prefer calling the specialized tool getMonthlyOrderReport once with {"year": YYYY}.\n` +
+    `After receiving the report, convert it to a single ChartSpec: chart="bar", xKey="month", yKey="count", data=[{"month":"Jan","count":n1},...].\n` +
     `If the time range is implied (e.g. last 7 days/this week/this month), apply appropriate date filters (created_at/paid_at/etc.), aggregate by day (YYYY-MM-DD), and zero-fill missing days.\n` +
     `Only after you have aggregated data, respond with action=final_answer and include one fenced ChartSpec JSON block in the 'answer'.\n\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
