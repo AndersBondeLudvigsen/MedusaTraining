@@ -1,275 +1,445 @@
-/**
- * seed-order.ts (Medusa v2.9.0)
- * -------------------------------------------------------------
- * Creates two demo orders in a running Medusa backend:
- *   1) Fully fulfilled order (created via Store API → fulfilled via Admin API)
- *   2) Returned & refunded order (create → return → receive → refund)
- *
- * Requirements
- * - Medusa v2.x backend running
- * - At least one Region, one Product with a Variant, and a non-return Shipping Option
- * - Store API requires a Publishable key (scopes to a Sales Channel)
- * - Admin auth via JWT (from /auth/user/emailpass) OR a secret API key (sk_...)
- *
- * Usage
- *   set MEDUSA_BACKEND_URL=http://localhost:9000
- *   set MEDUSA_ADMIN_API_TOKEN=<JWT or sk_...>
- *   set PUBLISHABLE_KEY=pk_...
- *   npx tsx src/scripts/seed-order.ts
- */
+// src/scripts/seed-order.ts — Medusa v2 exec script
+// Creates two demo orders:
+//   A) paid + fully fulfilled
+//   B) paid + fulfilled, then returned & refunded
 
-import 'dotenv/config'
+import type { ExecArgs } from "@medusajs/framework/types"
+import { Client as PgClient } from "pg"
 
-// Node 18+ includes global fetch.
+import {
+  createCustomersWorkflow,
+  createOrderWorkflow,
+  getOrderDetailWorkflow,
+  createOrderFulfillmentWorkflow,
+  createOrUpdateOrderPaymentCollectionWorkflow,
+  markPaymentCollectionAsPaid,
+  beginReturnOrderWorkflow,
+  beginReceiveReturnWorkflow,
+  confirmReturnRequestWorkflow,
+  refundPaymentsWorkflow,
+} from "@medusajs/core-flows"
 
-type Json = Record<string, any>
+import { Modules, ContainerRegistrationKeys } from "@medusajs/framework/utils"
 
-const BASE_URL = (process.env.MEDUSA_BACKEND_URL || 'http://localhost:9000').replace(/\/$/, '')
-const ADMIN_TOKEN = process.env.MEDUSA_ADMIN_API_TOKEN || ''
-const DEMO_EMAIL = process.env.DEMO_EMAIL || 'demo@example.com'
-const PUBLISHABLE_KEY =
-  process.env.PUBLISHABLE_KEY ||
-  process.env.MEDUSA_PUBLISHABLE_API_KEY ||
-  process.env.NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY ||
-  ''
+import {
+  createStockLocationsWorkflow,
+  createInventoryLevelsWorkflow,
+  createShippingProfilesWorkflow,
+  createShippingOptionsWorkflow,
+  linkSalesChannelsToStockLocationWorkflow,
+} from "@medusajs/medusa/core-flows"
 
-if (!ADMIN_TOKEN) console.warn('[WARN] MEDUSA_ADMIN_API_TOKEN not set. Admin calls will fail.')
-if (!PUBLISHABLE_KEY) console.warn('[WARN] PUBLISHABLE_KEY not set. Store API calls may fail.')
+export default async function seedTwoOrders({ container }: ExecArgs) {
+  const { faker } = await import("@faker-js/faker")
+  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
+  const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const link = container.resolve(ContainerRegistrationKeys.LINK)
 
-function adminHeaders(extra: Record<string, string> = {}) {
-  const token = ADMIN_TOKEN
-  const h: Record<string, string> = { 'Content-Type': 'application/json', ...extra }
-  if (token) {
-    if (token.startsWith('sk_')) {
-      // Secret API key — support both styles for broader compatibility
-      h['x-medusa-access-token'] = token
-      h['Authorization'] = `Bearer ${token}`
-    } else {
-      // Admin JWT
-      h['Authorization'] = `Bearer ${token}`
+  // Ensure a customer exists
+  let { data: customers } = (await query.graph({
+    entity: "customer",
+    fields: ["id", "email"],
+  })) as { data: Array<{ id: string; email: string }> }
+
+  if (!customers.length) {
+    logger.info("No customers found. Creating a new customer...")
+    const firstName = faker.person.firstName()
+    const lastName = faker.person.lastName()
+    const email = faker.internet
+      .email({ firstName, lastName, provider: "example.com" })
+      .toLowerCase()
+
+    await createCustomersWorkflow(container).run({
+      input: { customersData: [{ first_name: firstName, last_name: lastName, email }] },
+    })
+
+    const requery = (await query.graph({
+      entity: "customer",
+      fields: ["id", "email"],
+      filters: { email },
+    })) as { data: Array<{ id: string; email: string }> }
+    customers = requery.data?.length ? requery.data : customers
+    logger.info(`Created customer: ${email}`)
+  }
+
+  // Fetch region / products / shipping options
+  const { data: regions } = await query.graph({
+    entity: "region",
+    fields: ["id", "name", "currency_code", "countries.iso_2"],
+  })
+
+  const { data: products } = (await query.graph({
+    entity: "product",
+    fields: [
+      "id",
+      "title",
+      "variants.id",
+      "variants.prices.amount",
+      "variants.prices.currency_code",
+    ],
+  })) as {
+    data: Array<{
+      id: string
+      title: string
+      variants?: Array<{
+        id: string
+        prices?: Array<{ amount: number; currency_code: string }>
+      }>
+    }>
+  }
+
+  let { data: shipping_options } = (await query.graph({
+    entity: "shipping_option",
+    fields: [
+      "id",
+      "name",
+      "data",
+      "price_type",
+      "shipping_profile_id",
+      "provider_id",
+      "type.code",
+      "service_zone_id",
+    ],
+  })) as { data: Array<{ id: string; name: string }> }
+
+  if (!products.length) {
+    logger.warn("No products found. Please seed products first.")
+    return
+  }
+
+  const salesChannelModuleService = container.resolve(Modules.SALES_CHANNEL)
+  const defaultSalesChannel = await salesChannelModuleService.listSalesChannels({
+    name: "Default Sales Channel",
+  })
+
+  // Ensure stock location, inventory, and a shipping option
+  const fulfillmentModuleService = container.resolve(Modules.FULFILLMENT)
+
+  let { data: stock_locations } = (await query.graph({
+    entity: "stock_location",
+    fields: ["id", "name"],
+  })) as { data: Array<{ id: string; name: string }> }
+
+  if (!stock_locations.length) {
+    const { result: locs } = await createStockLocationsWorkflow(container).run({
+      input: {
+        locations: [
+          {
+            name: "European Warehouse",
+            address: { city: "Copenhagen", country_code: "DK", address_1: "" },
+          },
+        ],
+      },
+    })
+    stock_locations = locs
+  }
+  const stockLocationId = stock_locations[0].id
+
+  if (defaultSalesChannel?.[0]?.id) {
+    await linkSalesChannelsToStockLocationWorkflow(container).run({
+      input: { id: stockLocationId, add: [defaultSalesChannel[0].id] },
+    })
+  }
+
+  const { data: inventoryItems } = (await query.graph({
+    entity: "inventory_item",
+    fields: ["id"],
+  })) as { data: Array<{ id: string }> }
+
+  const { data: existingLevels } = (await query.graph({
+    entity: "inventory_level",
+    fields: ["inventory_item_id"],
+    filters: { location_id: stockLocationId },
+  })) as { data: Array<{ inventory_item_id: string }> }
+
+  const existingSet = new Set(existingLevels.map((l) => l.inventory_item_id))
+  const levelsToCreate = inventoryItems
+    .filter((ii) => !existingSet.has(ii.id))
+    .map((ii) => ({ location_id: stockLocationId, stocked_quantity: 1_000_000, inventory_item_id: ii.id }))
+
+  if (levelsToCreate.length) {
+    await createInventoryLevelsWorkflow(container).run({ input: { inventory_levels: levelsToCreate } })
+  }
+
+  if (!shipping_options.length) {
+    const profiles = await fulfillmentModuleService.listShippingProfiles({ type: "default" })
+    let shippingProfile = profiles[0]
+    if (!shippingProfile) {
+      const { result: profs } = await createShippingProfilesWorkflow(container).run({
+        input: { data: [{ name: "Default Shipping Profile", type: "default" }] },
+      })
+      shippingProfile = profs[0]
+    }
+
+    const countries = ["dk"]
+    const fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
+      name: "Default delivery",
+      type: "shipping",
+      service_zones: [
+        {
+          name: "Default Zone",
+          geo_zones: countries.map((c) => ({ country_code: c, type: "country" as const })),
+        },
+      ],
+    })
+
+    try {
+      await link.create({
+        [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
+        [Modules.FULFILLMENT]: { fulfillment_provider_id: "manual_manual" },
+      })
+    } catch {}
+    try {
+      await link.create({
+        [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
+        [Modules.FULFILLMENT]: { fulfillment_set_id: fulfillmentSet.id },
+      })
+    } catch {}
+
+    await createShippingOptionsWorkflow(container).run({
+      input: [
+        {
+          name: "Standard Shipping",
+          price_type: "flat",
+          provider_id: "manual_manual",
+          service_zone_id: fulfillmentSet.service_zones[0].id,
+          shipping_profile_id: shippingProfile.id,
+          type: { label: "Standard", description: "Ship in 2-3 days.", code: "standard" },
+          prices: [
+            { currency_code: "usd", amount: 10 },
+            { currency_code: "eur", amount: 10 },
+          ],
+          rules: [
+            { attribute: "enabled_in_store", value: "true", operator: "eq" },
+            { attribute: "is_return", value: "false", operator: "eq" },
+          ],
+        },
+      ],
+    })
+
+    const soRe = (await query.graph({ entity: "shipping_option", fields: ["id", "name"] })) as {
+      data: Array<{ id: string; name: string }>
+    }
+    shipping_options = soRe.data
+  }
+
+  // Deterministic picks
+  const region = regions[0]
+  const customer = customers[0]
+  const shipping_option = shipping_options[0]
+
+  const pickVariantWithPrice = () => {
+    for (const p of products) {
+      const v = p.variants?.[0]
+      if (!v) continue
+      const price = v.prices?.find((pr) => pr.currency_code === region.currency_code)?.amount || v.prices?.[0]?.amount
+      if (price) {
+        return { productTitle: p.title, variantId: v.id, unitPrice: price }
+      }
+    }
+    const p0 = products[0]
+    const v0 = p0.variants![0]
+    const price0 = v0.prices?.[0]?.amount || 2500
+    return { productTitle: p0.title, variantId: v0.id, unitPrice: price0 }
+  }
+
+  const baseAddress = {
+    first_name: faker.person.firstName(),
+    last_name: faker.person.lastName(),
+    phone: faker.phone.number(),
+    company: faker.company.name(),
+    address_1: faker.location.streetAddress(),
+    address_2: faker.location.secondaryAddress(),
+    city: faker.location.city(),
+    country_code: (Array.isArray(region.countries) && region.countries[0]?.iso_2?.toLowerCase()) || "de",
+    province: faker.location.state(),
+    postal_code: faker.location.zipCode(),
+    metadata: {},
+  }
+
+  const makeOrderInput = () => {
+    const line = pickVariantWithPrice()
+    return {
+      email: customer.email,
+      customer_id: customer.id,
+      region_id: region.id,
+      currency_code: region.currency_code,
+      sales_channel_id: defaultSalesChannel?.[0]?.id,
+      shipping_address: baseAddress,
+      billing_address: baseAddress,
+      items: [
+        { title: line.productTitle, unit_price: line.unitPrice, variant_id: line.variantId, quantity: 1 },
+      ],
+      shipping_methods: [
+        { option_id: shipping_option.id, name: shipping_option.name, amount: 10, data: {} },
+      ],
+      metadata: {},
     }
   }
-  return h
-}
 
-function storeHeaders(extra: Record<string, string> = {}) {
-  const h: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...extra,
+  async function backdateOrder(orderId: string) {
+    try {
+      const dbUrl = process.env.DATABASE_URL || ""
+      if (!dbUrl.startsWith("postgres")) return
+      const now = new Date()
+      const start = new Date(now)
+      start.setDate(start.getDate() - 14)
+      const offsetDays = Math.floor(Math.random() * 14)
+      const backdated = new Date(start)
+      backdated.setDate(start.getDate() + offsetDays)
+
+      const pg = new PgClient({ connectionString: dbUrl })
+      await pg.connect()
+      try {
+        const candidates = ['"order"', "orders", "order_order"]
+        for (const table of candidates) {
+          const res = await pg.query(
+            `update ${table} set created_at = $1, updated_at = case when updated_at < $1 then $1 else updated_at end where id = $2`,
+            [backdated.toISOString(), orderId]
+          )
+          if (res.rowCount) break
+        }
+      } finally {
+        await pg.end().catch(() => {})
+      }
+    } catch {}
   }
-  if (PUBLISHABLE_KEY) h['x-publishable-api-key'] = PUBLISHABLE_KEY
-  return h
-}
 
-async function api<T = any>(path: string, opts: RequestInit = {}, isAdmin = false): Promise<T> {
-  const url = `${BASE_URL}${path}`
-  const headers = isAdmin ? adminHeaders(opts.headers as any) : storeHeaders(opts.headers as any)
-  const res = await fetch(url, { ...opts, headers })
-  const text = await res.text()
-  let json: any = undefined
-  try { json = text ? JSON.parse(text) : undefined } catch {}
-  if (!res.ok) {
-    const msg = json?.message || json?.error || text || res.statusText
-    throw new Error(`[${res.status}] ${msg} — ${url}`)
+  async function ensurePaid(orderId: string, totalFallback?: number) {
+    const { result: detail } = await getOrderDetailWorkflow(container).run({
+      input: { order_id: orderId, fields: ["id", "total", "payment_status", "payment_collections.id"] },
+    })
+
+    let paymentCollectionId = detail.payment_collections?.[0]?.id
+    if (!paymentCollectionId) {
+      const { result: pcs } = await createOrUpdateOrderPaymentCollectionWorkflow(container).run({
+        input: { order_id: orderId, amount: Math.round(Number(detail.total || totalFallback || 0)) },
+      })
+      paymentCollectionId = pcs?.[0]?.id
+    }
+
+    if (paymentCollectionId) {
+      await markPaymentCollectionAsPaid(container).run({
+        input: { order_id: orderId, payment_collection_id: paymentCollectionId },
+      })
+    }
   }
-  return (json ?? ({} as any)) as T
-}
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const first = <T = any>(arr?: T[]): T | null => (arr && arr.length ? (arr[0] as any) : null)
+  // PATCHED: get items + shipping_method, and pass stockLocationId
+  async function fulfillAll(orderId: string, stockLocationId?: string) {
+    const { data: orders } = (await query.graph({
+      entity: "order",
+      fields: ["id", "items.id", "items.quantity", "shipping_methods.id"],
+      filters: { id: orderId },
+    })) as {
+      data: Array<{ id: string; items: Array<{ id: string; quantity: number }>; shipping_methods: Array<{ id: string }> }>
+    }
 
-async function ensureBasics() {
-  // 1) Region
-  const regionsRes = await api<{ regions: any[] }>(`/admin/regions?limit=50`, { method: 'GET' }, true)
-  const region = first(regionsRes.regions)
-  if (!region) throw new Error('No regions found. Seed base data first.')
+    const ord = orders?.[0]
+    const items = (ord?.items || [])
+      .filter((it) => it?.id && it?.quantity)
+      .map((it) => ({ id: it.id, quantity: it.quantity }))
 
-  // 2) Product variant
-  const prodsRes = await api<{ products: any[] }>(`/admin/products?limit=50`, { method: 'GET' }, true)
-  const prod = first(prodsRes.products)
-  const variant = prod?.variants?.[0]
-  if (!variant) throw new Error('No product variant found. Add a product with at least one variant.')
+    if (!items.length) {
+      logger.warn(`No items to fulfill for order ${orderId}`)
+      return
+    }
 
-  // 3) Shipping option for non-return shipments
-  const soRes = await api<{ shipping_options: any[] }>(`/admin/shipping-options?limit=50`, { method: 'GET' }, true)
-  const shippingOption = (soRes.shipping_options || []).find((s: any) => !s.is_return && (!s.region_id || s.region_id === region.id)) || first(soRes.shipping_options)
-  if (!shippingOption) throw new Error('No shipping option found. Create one in the Admin.')
+    const shippingMethodId = ord?.shipping_methods?.[0]?.id
 
-  // 4) Sales channel (optional; v2 usually derives from publishable key but some setups require explicit id)
-  let salesChannel: any = null
+    await createOrderFulfillmentWorkflow(container).run({
+      input: {
+        order_id: orderId,
+        items,
+        ...(stockLocationId ? { location_id: stockLocationId } : {}),
+        ...(shippingMethodId ? { shipping_method_id: shippingMethodId } : {}),
+      },
+    })
+  }
+
+  async function returnAndRefund(orderId: string) {
+    const { result: detail } = await getOrderDetailWorkflow(container).run({
+      input: {
+        order_id: orderId,
+        fields: [
+          "id",
+          "total",
+          "items.id",
+          "items.quantity",
+          "payment_collections.id",
+          "payment_collections.payments.id",
+        ],
+      },
+    })
+
+    const firstItem = detail.items?.[0]
+    if (!firstItem) {
+      logger.warn(`Order ${orderId} has no items to return.`)
+      return
+    }
+
+    await beginReturnOrderWorkflow(container).run({ input: { order_id: orderId } })
+
+    const { data: returns } = (await query.graph({
+      entity: "return",
+      fields: ["id", "status", "order_id"],
+      filters: { order_id: orderId },
+    })) as { data: Array<{ id: string; status: string; order_id: string }> }
+
+    const ret = returns?.[returns.length - 1]
+    if (!ret?.id) {
+      logger.warn(`Could not locate created return for order ${orderId}.`)
+      return
+    }
+
+    await beginReceiveReturnWorkflow(container).run({
+      input: { return_id: ret.id, description: "Seed script: receiving returned item(s)" },
+    })
+
+    await confirmReturnRequestWorkflow(container).run({ input: { return_id: ret.id } as any })
+
+    const payments = detail.payment_collections?.[0]?.payments || ([] as Array<{ id: string }>)
+    if (payments.length) {
+      await refundPaymentsWorkflow(container).run({
+        input: payments.map((p) => ({ payment_id: p.id })),
+      })
+    } else {
+      logger.warn(`No payments linked on order ${orderId}; cannot refund.`)
+    }
+  }
+
+  // Create Order A → pay → fulfill
   try {
-    const scRes = await api<{ sales_channels: any[] }>(`/admin/sales-channels?limit=50`, { method: 'GET' }, true)
-    salesChannel = first(scRes.sales_channels)
-  } catch {}
+    const orderInputA = makeOrderInput()
+    const { result: orderA } = await createOrderWorkflow(container).run({ input: orderInputA })
+    logger.info(`Created Order A: ${orderA.id}`)
 
-  // Optional: stock location for fulfillment
-  let location: any = null
+    await backdateOrder(orderA.id)
+    await ensurePaid(orderA.id, 0)
+    await fulfillAll(orderA.id, stockLocationId)
+    logger.info(`Order A paid & fulfilled.`)
+  } catch (e: any) {
+    logger.error(`Failed Order A flow: ${e?.message ?? e}`)
+    return
+  }
+
+  // Create Order B → pay → fulfill → return & refund
   try {
-    const locRes = await api<{ stock_locations: any[] }>(`/admin/stock-locations?limit=50`, { method: 'GET' }, true)
-    location = first(locRes.stock_locations)
-  } catch {}
+    const orderInputB = makeOrderInput()
+    const { result: orderB } = await createOrderWorkflow(container).run({ input: orderInputB })
+    logger.info(`Created Order B: ${orderB.id}`)
 
-  return { region, variant, shippingOption, location, salesChannel }
-}
+    await backdateOrder(orderB.id)
+    await ensurePaid(orderB.id, 0)
+    await fulfillAll(orderB.id, stockLocationId)
+    logger.info(`Order B paid & fulfilled.`)
 
-async function getManualProviderId(regionId: string) {
-  // Try to pick a provider id that represents manual/system; fall back to 'manual'
-  try {
-    const res = await api<{ payment_providers: Array<{ id: string }> }>(`/store/payment-providers?region_id=${encodeURIComponent(regionId)}`)
-    const ids = (res.payment_providers || []).map((p) => p.id)
-    const pick = ids.find((id) => id.toLowerCase().includes('manual')) || ids.find((id) => id.toLowerCase().includes('system')) || ids[0]
-    return pick || 'manual'
-  } catch {
-    return 'manual'
-  }
-}
-
-async function createOrderViaStore({ region, variant, shippingOption, salesChannel }: { region: any; variant: any; shippingOption: any; salesChannel?: any }) {
-  // 1) Create cart (v2: do not send country_code at creation)
-  const cartRes = await api<{ cart: any }>(`/store/carts`, {
-    method: 'POST',
-    body: JSON.stringify({
-      region_id: region.id,
-      ...(salesChannel ? { sales_channel_id: salesChannel.id } : {}),
-    }),
-  })
-  const cart = cartRes.cart
-
-  // 2) Add line item
-  await api(`/store/carts/${cart.id}/line-items`, {
-    method: 'POST',
-    body: JSON.stringify({ variant_id: variant.id, quantity: 1 }),
-  })
-
-  // 3) Set addresses + email
-  const countryCode = region.countries?.[0]?.iso_2 || region.countries?.[0]?.iso2 || 'us'
-  const address = {
-    first_name: 'Demo',
-    last_name: 'Customer',
-    address_1: '1 Seed St',
-    city: 'Seedville',
-    country_code: countryCode,
-    postal_code: '10000',
-  }
-  await api(`/store/carts/${cart.id}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      shipping_address: address,
-      billing_address: address,
-      email: DEMO_EMAIL,
-    }),
-  })
-
-  // 4) Add shipping method
-  await api(`/store/carts/${cart.id}/shipping-methods`, {
-    method: 'POST',
-    body: JSON.stringify({ option_id: shippingOption.id }),
-  })
-
-  // 5) v2 payment flow — create payment collection → init session → authorize
-  const pcRes = await api<{ payment_collection: any }>(`/store/payment-collections`, {
-    method: 'POST',
-    body: JSON.stringify({ cart_id: cart.id }),
-  })
-  const pc = (pcRes as any).payment_collection || pcRes
-
-  const providerId = await getManualProviderId(region.id)
-  const initRes = await api<{ payment_collection: any }>(`/store/payment-collections/${pc.id}/sessions`, {
-    method: 'POST',
-    body: JSON.stringify({ sessions: [{ provider_id: providerId }] }),
-  })
-  const sessions = ((initRes as any).payment_collection || initRes).payment_sessions || []
-  const session = first(sessions)
-  if (!session) throw new Error('Could not initialize a payment session for the payment collection')
-
-  await api(`/store/payment-collections/${pc.id}/sessions/${session.id}/authorize`, { method: 'POST' })
-
-  // 6) Complete cart -> returns order
-  const complete = await api<{ type?: string; data?: any; order?: any }>(`/store/carts/${cart.id}/complete`, { method: 'POST' })
-  const order = (complete as any).order || (complete.type === 'order' ? complete.data : null)
-  if (!order) throw new Error('Cart completion did not return an order (payment?)')
-
-  return order
-}
-
-async function fulfillOrder(orderId: string, locationId?: string) {
-  const ordRes = await api<{ order: any }>(`/admin/orders/${orderId}`, { method: 'GET' }, true)
-  const order = ordRes.order
-
-  const items = order.items.map((it: any) => ({ item_id: it.id, quantity: it.quantity }))
-  const body: Json = { items }
-  if (locationId) body.location_id = locationId
-
-  const fRes = await api<{ fulfillment: any }>(`/admin/orders/${orderId}/fulfillments`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  }, true)
-
-  const fulfillment = (fRes as any).fulfillment || (fRes as any)
-
-  // Optional: mark as shipped
-  try {
-    await api(`/admin/orders/${orderId}/shipment`, {
-      method: 'POST',
-      body: JSON.stringify({ fulfillment_id: fulfillment.id, tracking_numbers: ['TRACK-DEMO-0001'] }),
-    }, true)
-  } catch (e) {
-    console.warn('[WARN] shipment step failed (may differ by version)', (e as Error).message)
-  }
-}
-
-async function returnAndRefund(orderId: string) {
-  const ordRes = await api<{ order: any }>(`/admin/orders/${orderId}`, { method: 'GET' }, true)
-  const order = ordRes.order
-
-  const item = order.items?.[0]
-  if (!item) throw new Error('Order has no items to return.')
-
-  const retBody: Json = {
-    order_id: order.id,
-    items: [{ item_id: item.id, quantity: item.quantity }],
-    refund: true,
+    await returnAndRefund(orderB.id)
+    logger.info(`Order B returned & refunded.`)
+  } catch (e: any) {
+    logger.error(`Failed Order B flow: ${e?.message ?? e}`)
+    return
   }
 
-  const retRes = await api<{ return: any }>(`/admin/returns`, { method: 'POST', body: JSON.stringify(retBody) }, true)
-  const ret = (retRes as any).return || (retRes as any)
-
-  try {
-    await api(`/admin/returns/${ret.id}/receive`, { method: 'POST', body: JSON.stringify({ items: [{ item_id: item.id, quantity: item.quantity }] }) }, true)
-  } catch (e) {
-    console.warn('[WARN] return receive step failed (may differ by version)', (e as Error).message)
-  }
+  logger.info("✅ Done: created 2 demo orders (A fulfilled, B returned & refunded).")
 }
-
-async function main() {
-  console.log('→ Checking basics...')
-  const { region, variant, shippingOption, location, salesChannel } = await ensureBasics()
-  console.log('   Region:', region.name, `(${region.id})`)
-  console.log('   Variant:', variant.title || variant.id)
-  console.log('   Shipping option:', shippingOption.name || shippingOption.id)
-
-  // 1) Create and fulfill order
-  console.log('→ Creating Order A (to fully fulfill)...')
-  const orderA = await createOrderViaStore({ region, variant, shippingOption, salesChannel })
-  console.log('   Created order:', orderA.id)
-  await sleep(250)
-  console.log('→ Fulfilling Order A...')
-  await fulfillOrder(orderA.id, location?.id)
-  console.log('   Order A fulfilled (and shipped if supported).')
-
-  // 2) Create order B and process a return + refund
-  console.log('→ Creating Order B (to return & refund)...')
-  const orderB = await createOrderViaStore({ region, variant, shippingOption, salesChannel })
-  console.log('   Created order:', orderB.id)
-  await sleep(250)
-  console.log('→ Filing and receiving a return for Order B...')
-  await returnAndRefund(orderB.id)
-  console.log('   Order B returned (and refunded if supported).')
-
-  console.log('✅ Done. Check your Admin → Orders to verify statuses.')
-}
-
-main().catch((err) => {
-  console.error('❌ Seed failed:', err.message)
-  process.exitCode = 1
-})
