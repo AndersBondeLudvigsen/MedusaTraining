@@ -12,16 +12,49 @@ export type ToolCallEvent = {
   parsedPayload?: any;
 };
 
+export type NumberDelta = {
+  ai: number;
+  tool: number;
+  diff: number;
+  withinTolerance: boolean;
+};
+
+export type ValidationCheck = {
+  label: string; // e.g., "available_seats"
+  ai?: number; // number claimed by the assistant
+  tool?: number; // ground truth from a tool
+  tolerance?: number; // absolute tolerance allowed, default 0
+  delta?: NumberDelta; // computed diff
+  ok: boolean; // validation result
+};
+
+export type AssistantTurn = {
+  id: string;
+  timestamp: number; // ms epoch
+  userMessage: any; // sanitized
+  assistantMessage?: any; // sanitized
+  toolsUsed: string[]; // tool names the model invoked
+  extractedNumbers?: Record<string, number>; // from assistantMessage (best-effort)
+  groundedNumbers?: Record<string, number>; // supplied by your code from tools
+  validations: ValidationCheck[]; // results
+};
+
 export type Anomaly = {
   id: string;
   timestamp: number;
-  type: "negative-inventory" | "spike" | "high-error-rate";
+  type:
+    | "negative-inventory"
+    | "spike"
+    | "high-error-rate"
+    | "ai-mismatch"
+    | "ai-no-tool-used";
   message: string;
   details?: any;
 };
 
 const MAX_EVENTS = 1000;
 const MAX_ANOMALIES = 200;
+const MAX_TURNS = 300;
 const SPIKE_WINDOW_MIN = 10; // minutes for baseline
 const SPIKE_FACTOR = 3; // 3x baseline
 const SPIKE_MIN_ABS = 10; // at least 10 calls in the burst minute
@@ -48,7 +81,9 @@ function safeParseJSON(maybeJson: unknown): any | undefined {
 function extractToolJsonPayload(toolResult: any): any | undefined {
   if (toolResult && typeof toolResult === "object") return toolResult;
   try {
-    const textItem = toolResult?.content?.find?.((c: any) => c?.type === "text");
+    const textItem = toolResult?.content?.find?.(
+      (c: any) => c?.type === "text"
+    );
     if (textItem?.text) return safeParseJSON(textItem.text);
   } catch {}
   return undefined;
@@ -87,7 +122,8 @@ function detectNegativeInventory(payload: any) {
     /(^|\.)adjustments?(\.|$)/i,
   ];
 
-  const isExcluded = (pathStr: string) => EXCLUDED_PATHS.some((r) => r.test(pathStr));
+  const isExcluded = (pathStr: string) =>
+    EXCLUDED_PATHS.some((r) => r.test(pathStr));
 
   const walk = (node: any, path: string[]) => {
     if (!node || typeof node !== "object") return;
@@ -98,7 +134,12 @@ function detectNegativeInventory(payload: any) {
     for (const [k, v] of Object.entries(node)) {
       const p = [...path, k];
       const pathStr = p.join(".");
-      if (!isExcluded(pathStr) && INVENTORY_KEYS.has(k) && typeof v === "number" && v < 0) {
+      if (
+        !isExcluded(pathStr) &&
+        INVENTORY_KEYS.has(k) &&
+        typeof v === "number" &&
+        v < 0
+      ) {
         findings.push({ path: pathStr, value: v });
       }
       if (v && typeof v === "object") walk(v as any, p);
@@ -110,24 +151,36 @@ function detectNegativeInventory(payload: any) {
 
 /* --------------------------- Secret redaction --------------------------- */
 
-type Redaction = { pattern: RegExp; replace?: string | ((m: string) => string) };
+type Redaction = {
+  pattern: RegExp;
+  replace?: string | ((m: string) => string);
+};
 
 // Conservative patterns; extend with provider-specific ones if needed.
 const SECRET_PATTERNS: Redaction[] = [
   // Bearer tokens / Authorization headers
-  { pattern: /\bBearer\s+[A-Za-z0-9._-]{20,}\b/gi, replace: "Bearer ***REDACTED***" },
+  {
+    pattern: /\bBearer\s+[A-Za-z0-9._-]{20,}\b/gi,
+    replace: "Bearer ***REDACTED***",
+  },
   // JWT (three dot-separated Base64URL segments)
-  { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, replace: "***REDACTED_JWT***" },
+  {
+    pattern:
+      /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    replace: "***REDACTED_JWT***",
+  },
   // OpenAI-like "sk-" keys
   { pattern: /\bsk-[A-Za-z0-9]{20,}\b/g, replace: "***REDACTED_KEY***" },
   // Generic key/value tokens in text
   {
-    pattern: /\b(?:api[-_]?key|access[-_]?key|secret|token|pat|session|authorization)\b\s*[:=]\s*["']?([A-Za-z0-9._-]{20,})/gi,
+    pattern:
+      /\b(?:api[-_]?key|access[-_]?key|secret|token|pat|session|authorization)\b\s*[:=]\s*["']?([A-Za-z0-9._-]{20,})/gi,
     replace: (m) => m.replace(/([A-Za-z0-9._-]{20,})$/g, "***REDACTED***"),
   },
   // URL query params that often carry secrets
   {
-    pattern: /([?&](?:api[_-]?key|key|token|access[_-]?token|auth|signature|sig)=)[^&#\s]+/gi,
+    pattern:
+      /([?&](?:api[_-]?key|key|token|access[_-]?token|auth|signature|sig)=)[^&#\s]+/gi,
     replace: (m) => m.replace(/=.*/g, "=***REDACTED***"),
   },
 ];
@@ -159,7 +212,7 @@ function redactStrings(input: string): string {
   let out = input;
   for (const { pattern, replace } of SECRET_PATTERNS) {
     out = out.replace(pattern, (m: string) =>
-      typeof replace === "function" ? replace(m) : (replace ?? "***REDACTED***")
+      typeof replace === "function" ? replace(m) : replace ?? "***REDACTED***"
     );
   }
 
@@ -214,9 +267,45 @@ function redactObjectDeep<T>(value: T): T {
 
 /* ------------------------- End secret redaction ------------------------- */
 
+/* ------------------------ Assistant parsing helpers ------------------------ */
+
+/** Extract first integer/float that follows a given label (simple heuristic). */
+function extractLabeledNumber(text: string, label: string): number | undefined {
+  const re = new RegExp(`${label}\\D*(-?\\d+(?:[\\.,]\\d+)?)`, "i");
+  const m = text.match(re);
+  if (!m) return undefined;
+  return Number(String(m[1]).replace(",", "."));
+}
+
+/** Extract any standalone numbers with lightweight labels (e.g., "seats: 12"). */
+function extractAnyNumbers(text: string): Record<string, number> {
+  const found: Record<string, number> = {};
+  // pattern: key: value OR key value
+  const re = /\b([a-z][a-z0-9_\- ]{2,20})[: ]\s*(-?\d+(?:[.,]\d+)?)(?![%\w])/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const key = m[1].trim().toLowerCase().replace(/\s+/g, "_");
+    const num = Number(m[2].replace(",", "."));
+    if (!Number.isNaN(num)) found[key] = num;
+  }
+  // Also catch bare numbers labeled “total|count|available|seats|items”
+  const re2 = /\b(total|count|available|seats|items)\D*(-?\d+(?:[.,]\d+)?)/gi;
+  while ((m = re2.exec(text))) {
+    const key = m[1].toLowerCase();
+    const num = Number(m[2].replace(",", "."));
+    if (!(key in found) && !Number.isNaN(num)) found[key] = num;
+  }
+  return found;
+}
+
+/* ---------------------- End assistant parsing helpers ---------------------- */
+
 class MetricsStore {
   private events: ToolCallEvent[] = [];
   private anomalies: Anomaly[] = [];
+  private turns: AssistantTurn[] = [];
+
+  /* ------------------------------ Tools logging ------------------------------ */
 
   startToolCall(tool: string, args: any): string {
     const id = generateId();
@@ -250,6 +339,146 @@ class MetricsStore {
 
     this.checkAnomaliesAfterEvent(evt);
   }
+
+  /* --------------------------- Assistant turn logging --------------------------- */
+
+  /** Begin an assistant turn (call when a user message arrives). */
+  startAssistantTurn(userMessage: any): string {
+    const id = generateId();
+    const turn: AssistantTurn = {
+      id,
+      timestamp: Date.now(),
+      userMessage: this.sanitize(userMessage),
+      toolsUsed: [],
+      validations: [],
+    };
+    this.turns.push(turn);
+    if (this.turns.length > MAX_TURNS)
+      this.turns.splice(0, this.turns.length - MAX_TURNS);
+    return id;
+  }
+
+  /** Record that a tool was used during a given turn (optional but useful). */
+  noteToolUsed(turnId: string, toolName: string) {
+    const t = this.turns.find((x) => x.id === turnId);
+    if (!t) return;
+    if (!t.toolsUsed.includes(toolName)) t.toolsUsed.push(toolName);
+  }
+
+  /** Finish an assistant turn with the final assistant message. */
+  endAssistantTurn(turnId: string, assistantMessage: any) {
+    const t = this.turns.find((x) => x.id === turnId);
+    if (!t) return;
+    t.assistantMessage = this.sanitize(assistantMessage);
+
+    // Attempt to extract numeric claims from the raw text (best-effort).
+    try {
+      const text =
+        typeof assistantMessage === "string"
+          ? assistantMessage
+          : assistantMessage?.content ??
+            assistantMessage?.text ??
+            JSON.stringify(assistantMessage);
+      if (typeof text === "string") {
+        t.extractedNumbers = extractAnyNumbers(text);
+      }
+    } catch {}
+
+    // Optional anomaly: numeric claims but no tools used
+    if (
+      t.extractedNumbers &&
+      Object.keys(t.extractedNumbers).length > 0 &&
+      t.toolsUsed.length === 0
+    ) {
+      this.pushAnomaly({
+        id: generateId(),
+        timestamp: Date.now(),
+        type: "ai-no-tool-used",
+        message: "Assistant produced numeric claims without using tools",
+        details: { turnId: t.id, claims: t.extractedNumbers },
+      });
+    }
+  }
+
+  /** Provide ground-truth numbers from tools for this turn. */
+  provideGroundTruth(turnId: string, numbers: Record<string, number>) {
+    const t = this.turns.find((x) => x.id === turnId);
+    if (!t) return;
+    t.groundedNumbers = { ...(t.groundedNumbers ?? {}), ...numbers };
+  }
+
+  /** Validate a single labeled number (explicit). */
+  validateNumber(
+    turnId: string,
+    label: string,
+    ai: number | undefined,
+    tool: number | undefined,
+    tolerance = 0
+  ) {
+    const t = this.turns.find((x) => x.id === turnId);
+    if (!t) return;
+
+    const delta: NumberDelta | undefined =
+      ai != null && tool != null
+        ? {
+            ai,
+            tool,
+            diff: ai - tool,
+            withinTolerance: Math.abs(ai - tool) <= Math.abs(tolerance),
+          }
+        : undefined;
+
+    const ok = !!delta && delta.withinTolerance;
+
+    const check: ValidationCheck = { label, ai, tool, tolerance, delta, ok };
+    t.validations.push(check);
+
+    // Anomaly for mismatch
+    if (tool != null && ai != null && !ok) {
+      this.pushAnomaly({
+        id: generateId(),
+        timestamp: Date.now(),
+        type: "ai-mismatch",
+        message: `AI mismatch on "${label}": AI=${ai}, TOOL=${tool}, tol=${tolerance}`,
+        details: { turnId, label, ai, tool, tolerance, diff: delta?.diff },
+      });
+    }
+  }
+
+  /** Convenience: extract AI’s claim for the label from its final text, then validate. */
+  autoValidateFromAnswer(
+    turnId: string,
+    label: string,
+    tool: number,
+    tolerance = 0
+  ) {
+    const t = this.turns.find((x) => x.id === turnId);
+    if (!t) return;
+
+    let ai: number | undefined;
+
+    // Prefer structured extraction if we already parsed numbers
+    if (t.extractedNumbers && label in t.extractedNumbers) {
+      ai = t.extractedNumbers[label];
+    } else {
+      // Fallback: search in assistant message text
+      const raw =
+        typeof t.assistantMessage === "string"
+          ? t.assistantMessage
+          : JSON.stringify(t.assistantMessage);
+      ai =
+        typeof raw === "string" ? extractLabeledNumber(raw, label) : undefined;
+    }
+
+    this.validateNumber(turnId, label, ai, tool, tolerance);
+  }
+
+  /** Optional: get last turn (helper for orchestration code) */
+  getLastTurn(): AssistantTurn | undefined {
+    return this.turns[this.turns.length - 1];
+  }
+
+  /* --------------------------------- Summary -------------------------------- */
 
   getSummary() {
     const now = Date.now();
@@ -295,6 +524,20 @@ class MetricsStore {
 
     const recentEvents = this.events.slice(-50);
 
+    // Assistant validation summary
+    const lastTurns = this.turns.slice(-50);
+    const validationTotals = lastTurns.reduce(
+      (acc, t) => {
+        for (const v of t.validations) {
+          acc.total++;
+          if (v.ok) acc.ok++;
+          else acc.fail++;
+        }
+        return acc;
+      },
+      { total: 0, ok: 0, fail: 0 }
+    );
+
     return {
       totals: { totalEvents: total, lastHour: lastHour.length },
       byTool,
@@ -306,6 +549,10 @@ class MetricsStore {
       },
       recentEvents,
       anomalies: this.anomalies.slice(-50),
+      assistant: {
+        turns: lastTurns,
+        validation: validationTotals,
+      },
     };
   }
 
@@ -316,6 +563,8 @@ class MetricsStore {
   getAnomalies() {
     return this.anomalies.slice();
   }
+
+  /* --------------------------------- Internals -------------------------------- */
 
   private pushEvent(evt: ToolCallEvent) {
     this.events.push(evt);
@@ -393,14 +642,16 @@ class MetricsStore {
     } catch {}
   }
 
-  // NEW: deep redaction + length limits with stable object shape
+  // Deep redaction + length limits with stable object shape
   private sanitize(obj: any, maxLen = 3000) {
     try {
       const redacted = redactObjectDeep(obj);
 
       const json = JSON.stringify(redacted, (k, v) => {
-        if (typeof v === "string" && v.length > 1000) return v.slice(0, 1000) + "…";
-        if (Array.isArray(v) && v.length > 200) return v.slice(0, 200).concat(["…truncated…"]);
+        if (typeof v === "string" && v.length > 1000)
+          return v.slice(0, 1000) + "…";
+        if (Array.isArray(v) && v.length > 200)
+          return v.slice(0, 200).concat(["…truncated…"]);
         return v;
       });
 
