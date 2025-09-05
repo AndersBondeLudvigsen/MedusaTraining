@@ -497,7 +497,7 @@ async function planNextStepWithGemini(
 - Focus on retrieving data that can be visualized effectively in chart format`
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-  console.log(`🎯 PROMPT CONSTRUCTION:`);
+  console.log(`🎯 PROMPT CONSTRUCTION (OPTIMIZED):`);
   console.log(`   Category: ${category || "none (general)"}`);
   console.log(`   Wants Chart: ${wantsChart}`);
   console.log(`   Chart Type: ${wantsChart ? chartType : "n/a"}`);
@@ -511,13 +511,8 @@ async function planNextStepWithGemini(
           : ""
       }`;
 
-  console.log(`📝 ROLE PROMPT:`);
-  console.log(`   ${rolePrompt.substring(0, 100)}...`);
-
-  console.log(`📋 CHART DIRECTIVE:`);
-  console.log(`   ${chartDirective.substring(0, 100)}...`);
-
-  const instruction =
+  // STATIC CONTENT (sent once as system message)
+  const systemMessage =
     `${rolePrompt}\n\n` +
     `Decide the next step based on the user's goal and the tool-call history.\n` +
     `Actions: 'call_tool' or 'final_answer'.\n\n` +
@@ -527,25 +522,47 @@ async function planNextStepWithGemini(
     `Always retrieve real data via the most relevant tool (Admin* list endpoints or custom tools).\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
     `JSON to call a tool: {"action":"call_tool","tool_name":"string","tool_args":object}\n` +
-    `JSON for the final answer: {"action":"final_answer","answer":"string"}`;
+    `JSON for the final answer: {"action":"final_answer","answer":"string"}\n\n` +
+    `AVAILABLE TOOLS:\n${JSON.stringify(toolCatalog, null, 2)}`;
 
-  console.log(`🤖 FINAL INSTRUCTION LENGTH: ${instruction.length} characters`);
-  console.log(`🔧 AVAILABLE TOOLS: ${tools.length} tools`);
-  console.log(`📚 HISTORY STEPS: ${history.length} previous actions`);
+  // DYNAMIC CONTENT (changes each loop)
+  const userMessage = [
+    `User's goal: ${userPrompt}`,
+    history.length > 0
+      ? `Previous actions taken:\n${JSON.stringify(history, null, 2)}`
+      : "No previous actions taken.",
+    `What should I do next? Respond with ONLY the JSON object.`,
+  ].join("\n\n");
+
+  console.log(`📊 TOKEN OPTIMIZATION:`);
+  console.log(`   System message: ${systemMessage.length} chars (sent once)`);
+  console.log(
+    `   User message: ${userMessage.length} chars (changes each loop)`
+  );
+  console.log(`   History steps: ${history.length} previous actions`);
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 
-  const promptText = [
-    instruction,
-    `Tool Catalog (JSON):\n${JSON.stringify(toolCatalog, null, 2)}`,
-    `History of previous steps:\n${JSON.stringify(history, null, 2)}`,
-    `User's ultimate goal: ${userPrompt}`,
-    `Respond with ONLY the JSON object for the next action.`,
-  ].join("\n\n");
-
   const result = await ai.models.generateContent({
     model: modelName,
-    contents: promptText,
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: systemMessage }],
+      },
+      {
+        role: "model",
+        parts: [
+          {
+            text: "I understand. I'm ready to help with your e-commerce platform. I'll analyze your request and decide whether to call a tool or provide a final answer. Please provide the current situation.",
+          },
+        ],
+      },
+      {
+        role: "user",
+        parts: [{ text: userMessage }],
+      },
+    ],
   });
 
   const text = (result as any).text;
