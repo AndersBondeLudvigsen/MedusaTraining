@@ -224,10 +224,22 @@ const MetricsPage = () => {
             <ul className="grid gap-1">
               {summary?.anomalies?.map((a) => (
                 <li key={a.id} className="text-sm">
-                  <span className="text-ui-fg-subtle">
-                    [{timeStr(a.timestamp)}]
-                  </span>{" "}
+                  <span className="text-ui-fg-subtle">[{timeStr(a.timestamp)}]</span>{" "}
                   <b>{a.type}</b>: {a.message}
+                  {a.type === "negative-inventory" && a.details?.fields?.length ? (
+                    <div className="mt-1 ml-4">
+                      <details>
+                        <summary className="cursor-pointer text-ui-fg-subtle">
+                          {a.details?.scoped ? "Scoped detection (inventory keys only)" : "Detection details"}
+                        </summary>
+                        <ul className="list-disc ml-6 mt-1">
+                          {a.details.fields.map((f: any, i: number) => (
+                            <li key={i}><code>{f.path}</code>: {String(f.value)}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

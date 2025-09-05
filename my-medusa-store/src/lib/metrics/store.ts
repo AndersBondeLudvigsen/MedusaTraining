@@ -63,19 +63,31 @@ function generateId() {
 
 // Heuristic: detect negative inventory quantities in a JSON payload
 function detectNegativeInventory(payload: any) {
+  // Only scan a narrow set of inventory-related keys and avoid generic fields like quantity/qty.
   const findings: Array<{ path: string; value: number }> = [];
-  const NEG_KEYS = new Set([
-    "inventory",
-    "inventory_quantity",
-    "inventory_qty",
-    "stock",
-    "stock_level",
-    "available",
+
+  // Keys validated against MCP OAS/types for inventory levels/variants
+  // - inventory levels: stocked_quantity, reserved_quantity, available_quantity, incoming_quantity
+  // - variants: inventory_quantity (only when requested in fields)
+  const INVENTORY_KEYS = new Set([
+    "stocked_quantity",
+    "reserved_quantity",
     "available_quantity",
-    "available_qty",
-    "quantity",
-    "qty",
+    "incoming_quantity",
+    "inventory_quantity",
   ]);
+
+  // Exclude well-known non-inventory contexts (orders, returns, discounts, refunds, adjustments)
+  const EXCLUDED_PATHS: RegExp[] = [
+    /(^|\.)orders?(\.|$)/i,
+    /(^|\.)order(\.|$)/i,
+    /(^|\.)returns?(\.|$)/i,
+    /(^|\.)refunds?(\.|$)/i,
+    /(^|\.)discounts?(\.|$)/i,
+    /(^|\.)adjustments?(\.|$)/i,
+  ];
+
+  const isExcluded = (pathStr: string) => EXCLUDED_PATHS.some((r) => r.test(pathStr));
 
   const walk = (node: any, path: string[]) => {
     if (!node || typeof node !== "object") return;
@@ -85,8 +97,9 @@ function detectNegativeInventory(payload: any) {
     }
     for (const [k, v] of Object.entries(node)) {
       const p = [...path, k];
-      if (NEG_KEYS.has(k) && typeof v === "number" && v < 0) {
-        findings.push({ path: p.join("."), value: v });
+      const pathStr = p.join(".");
+      if (!isExcluded(pathStr) && INVENTORY_KEYS.has(k) && typeof v === "number" && v < 0) {
+        findings.push({ path: pathStr, value: v });
       }
       if (v && typeof v === "object") walk(v as any, p);
     }
@@ -329,8 +342,8 @@ class MetricsStore {
             id: generateId(),
             timestamp: now,
             type: "negative-inventory",
-            message: `Negative inventory detected in ${evt.tool} result (${negs.length} fields)`,
-            details: { fields: negs.slice(0, 10) },
+            message: `Negative inventory detected in ${evt.tool} result (${negs.length} fields) [scoped keys only]`,
+            details: { fields: negs.slice(0, 10), scoped: true },
           });
         }
       }
