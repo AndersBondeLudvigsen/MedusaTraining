@@ -113,6 +113,22 @@ const AssistantPage = () => {
     } catch {}
   }, [selectedCategory]);
 
+  // Category-specific prompts and placeholders
+  const getCategoryPlaceholder = (category: string) => {
+    switch (category) {
+      case "customers":
+        return 'Ask about customers (e.g. "How many new customers did we get this month?" or "Show me customer demographics")';
+      case "orders":
+        return 'Ask about orders (e.g. "How many orders do I have in 2025, grouped by month?" or "What is my average order value?")';
+      case "products":
+        return 'Ask about products (e.g. "Which products are my best sellers?" or "Show me products with low inventory")';
+      case "promotions":
+        return 'Ask about promotions (e.g. "How effective were my recent promotions?" or "Show me discount usage statistics")';
+      default:
+        return 'Ask the assistant (e.g. "How many orders do I have in 2025, grouped by month?")';
+    }
+  };
+
   const canSubmit = useMemo(
     () => prompt.trim().length > 0 && !loading,
     [prompt, loading]
@@ -126,9 +142,10 @@ const AssistantPage = () => {
     setChart(null);
     try {
       const body: any = {
-        prompt,
+        prompt: prompt,
         wantsChart,
         chartType,
+        category: selectedCategory,
       };
       if (chartTitle && chartTitle.trim().length > 0) {
         body.chartTitle = chartTitle.trim();
@@ -157,7 +174,7 @@ const AssistantPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [prompt, canSubmit, wantsChart, chartType, chartTitle]);
+  }, [prompt, canSubmit, wantsChart, chartType, chartTitle, selectedCategory]);
 
   const onClear = useCallback(() => {
     setPrompt("");
@@ -205,6 +222,13 @@ const AssistantPage = () => {
           </select>
         </div>
 
+        {/* Category Context Indicator */}
+        {selectedCategory && (
+          <div className="text-xs text-ui-fg-muted bg-ui-bg-subtle px-2 py-1 rounded border">
+            <strong>Context:</strong> {selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)} focus mode
+          </div>
+        )}
+
         {/* Prompt input */}
         <textarea
           value={prompt}
@@ -215,7 +239,7 @@ const AssistantPage = () => {
               onAsk();
             }
           }}
-          placeholder='Ask the assistant (e.g. "How many orders do I have in 2025, grouped by month?" )'
+          placeholder={getCategoryPlaceholder(selectedCategory)}
           rows={4}
           className="border-ui-border-base bg-ui-bg-base text-ui-fg-base rounded-md border p-2"
         />

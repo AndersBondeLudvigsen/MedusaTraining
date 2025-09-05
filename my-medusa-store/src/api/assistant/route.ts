@@ -303,7 +303,8 @@ async function planNextStepWithGemini(
   tools: McpTool[],
   history: { tool_name: string; tool_args: any; tool_result: any }[],
   modelName = "gemini-2.5-flash",
-  wantsChart: boolean = false
+  wantsChart: boolean = false,
+  category?: string
 ): Promise<{
   action: "call_tool" | "final_answer";
   tool_name?: string;
@@ -324,11 +325,28 @@ async function planNextStepWithGemini(
     ? "The UI will render charts. Do NOT produce chart JSON—call tools to fetch accurate data and summarize."
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-  const instruction =
-    `You are a reasoning agent for an e-commerce backend. Decide the next step based on the user's goal and the tool-call history.\n` +
-    `Actions: 'call_tool' or 'final_answer'.\n\n` +
-    `1) If you need information or must perform an action, choose 'call_tool'.\n` +
-    `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n` +
+  // Category-specific instructions
+  const getCategoryInstruction = (category?: string): string => {
+    const baseInstruction = `You are a reasoning agent for an e-commerce backend. Decide the next step based on the user's goal and the tool-call history.\n` +
+      `Actions: 'call_tool' or 'final_answer'.\n\n` +
+      `1) If you need information or must perform an action, choose 'call_tool'.\n` +
+      `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n`;
+
+    const categoryContext = {
+      customers: `CUSTOMER FOCUS: You specialize in customer analytics and management. Prioritize customer-related data, demographics, behavior patterns, segmentation, and customer lifecycle metrics. When analyzing data, focus on customer acquisition, retention, lifetime value, and satisfaction metrics.`,
+      orders: `ORDER FOCUS: You specialize in order analytics and management. Prioritize order-related data, sales performance, order fulfillment, processing times, and revenue metrics. When analyzing data, focus on order volumes, trends, conversion rates, and operational efficiency.`,
+      products: `PRODUCT FOCUS: You specialize in product analytics and inventory management. Prioritize product-related data, inventory levels, product performance, categories, and merchandising metrics. When analyzing data, focus on best sellers, stock management, product profitability, and catalog optimization.`,
+      promotions: `PROMOTION FOCUS: You specialize in promotion and discount analytics. Prioritize promotion-related data, discount effectiveness, campaign performance, and marketing metrics. When analyzing data, focus on promotion ROI, usage rates, customer response, and campaign optimization.`
+    };
+
+    const categorySpecific = category && categoryContext[category as keyof typeof categoryContext] 
+      ? `\n\n${categoryContext[category as keyof typeof categoryContext]}\n\n`
+      : '\n\n';
+
+    return baseInstruction + categorySpecific;
+  };
+
+  const instruction = getCategoryInstruction(category) +
     `${chartDirective}\n\n` +
     `Always retrieve real data via the most relevant tool (Admin* list endpoints or custom tools).\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
@@ -368,6 +386,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       wantsChart?: boolean;
       chartType?: ChartType;
       chartTitle?: string;
+      category?: string;
     };
 
     const prompt = body.prompt?.trim();
@@ -376,6 +395,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const wantsChart = Boolean(body.wantsChart);
     const chartType: ChartType = body.chartType === "line" ? "line" : "bar";
     const chartTitle = typeof body.chartTitle === "string" ? body.chartTitle : undefined;
+    const category = typeof body.category === "string" ? body.category : undefined;
 
     const mcp = await getMcp();
     const tools = await mcp.listTools();
@@ -395,7 +415,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         availableTools,
         history,
         "gemini-2.5-flash",
-        wantsChart
+        wantsChart,
+        category
       );
 
       if (plan.action === "final_answer") {
