@@ -3,15 +3,17 @@ import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
 import {
   getOrderDetailWorkflow,
   createOrderFulfillmentWorkflow,
+  createOrderShipmentWorkflow,
 } from "@medusajs/core-flows";
 
 export default async function fulfillSpecificOrder({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
   const inventoryModuleService = container.resolve(Modules.INVENTORY);
+  const fulfillmentModuleService = container.resolve(Modules.FULFILLMENT);
   
   // Specific order ID to test with
-  const orderId = "order_01K4C72S9J4GW2NAZEMA4XC08G";
+  const orderId = "order_01K4C8KQT4S3E3CAMQXQKKGPSW"
   
   logger.info(`🚀 Testing fulfillment with reservation for order: ${orderId}`);
 
@@ -63,8 +65,8 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
     }
     
     // Check payment status
-    if (paymentStatus !== "captured") {
-      logger.error(`❌ Order payment status is '${paymentStatus}' - only captured orders can be fulfilled.`);
+    if (paymentStatus !== "captured" && paymentStatus !== "completed") {
+      logger.error(`❌ Order payment status is '${paymentStatus}' - only captured/completed orders can be fulfilled.`);
       logger.info(`💡 If you know the order is paid, we can continue anyway for testing...`);
       // Let's continue anyway for testing since you confirmed it's captured
       logger.info(`🚀 Continuing with fulfillment (payment status override for testing)...`);
@@ -96,12 +98,6 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
     logger.info(`📦 Items in order (${order.items.length}):`);
     const itemsToFulfill: any[] = [];
     const reservations: any[] = [];
-    
-    // Debug: Show what fields are available in the first item
-    if (order.items && order.items.length > 0) {
-      logger.info(`🔍 DEBUG: Available fields in first item: ${Object.keys(order.items[0]).join(', ')}`);
-      logger.info(`🔍 DEBUG: First item data: ${JSON.stringify(order.items[0], null, 2)}`);
-    }
 
     // Step 3: Process each item and create reservations
     logger.info(`🔧 Step 3: Processing items and creating reservations...`);
@@ -248,6 +244,27 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
     logger.info(`🎉 SUCCESS! Fulfillment created!`);
     logger.info(`📝 Fulfillment ID: ${fulfillmentResult.result?.id || 'Generated'}`);
     
+    // Step 4.5: Mark fulfillment as delivered
+    logger.info(`� Step 4.5: Marking fulfillment as delivered...`);
+    
+    const fulfillmentId = fulfillmentResult.result?.id;
+    if (fulfillmentId) {
+      try {
+        // Update the fulfillment to mark it as delivered
+        await fulfillmentModuleService.updateFulfillment(fulfillmentId, {
+          delivered_at: new Date(),
+        });
+        
+        logger.info(`🎉 SUCCESS! Fulfillment marked as delivered!`);
+        logger.info(`✅ Fulfillment status should now be 'delivered'`);
+      } catch (deliveryError: any) {
+        logger.error(`❌ Failed to mark fulfillment as delivered: ${deliveryError.message}`);
+        logger.info(`💡 Fulfillment was created but not marked as delivered`);
+      }
+    } else {
+      logger.warn(`⚠️ No fulfillment ID returned, cannot mark as delivered`);
+    }
+    
     // Step 5: Verify the fulfillment
     logger.info(`🔍 Step 5: Verifying fulfillment by re-fetching order...`);
     const { data: updatedOrders } = await query.graph({
@@ -255,7 +272,7 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
       fields: [
         "id",
         "fulfillment_status",
-        "items.fulfilled_quantity",
+        "items.*", // Get all item fields including detail.fulfilled_quantity
         "fulfillments.id",
         "fulfillments.items.id",
         "fulfillments.items.quantity",
@@ -271,7 +288,9 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
       
       if (updatedOrder.items) {
         updatedOrder.items.forEach((item: any, index: number) => {
-          logger.info(`  Item ${index + 1} fulfilled quantity: ${item.fulfilled_quantity || 0}`);
+          // Try to get fulfilled quantity from the detail object or direct field
+          const fulfilledQty = item.detail?.fulfilled_quantity || item.fulfilled_quantity || 0;
+          logger.info(`  Item ${index + 1} fulfilled quantity: ${fulfilledQty}`);
         });
       }
 

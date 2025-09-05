@@ -20,6 +20,7 @@
     "seedOrders": "medusa exec ./src/scripts/seed-orders.ts",
     "seedCustomers": "medusa exec ./src/scripts/seed-customers.ts",
     "fulfillOrders": "medusa exec ./src/scripts/fulfill-order.ts",
+    "fulfillAllOrders": "medusa exec ./src/scripts/fulfill-all-orders.ts",
     "testFulfillOne": "medusa exec ./src/scripts/test-fulfill-one.ts",
     "directFulfill": "medusa exec ./src/scripts/direct-fulfill.ts",
     "fulfillWithReservation": "medusa exec ./src/scripts/fulfill-with-reservation.ts",
