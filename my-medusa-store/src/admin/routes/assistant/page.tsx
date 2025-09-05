@@ -205,7 +205,10 @@ const AssistantPage = () => {
 
         {/* Category Selection */}
         <div className="flex items-center gap-2">
-          <label htmlFor="category-select" className="text-ui-fg-subtle font-medium">
+          <label
+            htmlFor="category-select"
+            className="text-ui-fg-subtle font-medium"
+          >
             Category:
           </label>
           <select
@@ -225,7 +228,10 @@ const AssistantPage = () => {
         {/* Category Context Indicator */}
         {selectedCategory && (
           <div className="text-xs text-ui-fg-muted bg-ui-bg-subtle px-2 py-1 rounded border">
-            <strong>Context:</strong> {selectedCategory.charAt(0).toUpperCase() + selectedCategory.slice(1)} focus mode
+            <strong>Context:</strong>{" "}
+            {selectedCategory.charAt(0).toUpperCase() +
+              selectedCategory.slice(1)}{" "}
+            focus mode
           </div>
         )}
 
@@ -264,7 +270,9 @@ const AssistantPage = () => {
             <select
               disabled={!wantsChart}
               value={chartType}
-              onChange={(e) => setChartType((e.target.value as "bar" | "line") ?? "bar")}
+              onChange={(e) =>
+                setChartType((e.target.value as "bar" | "line") ?? "bar")
+              }
               className="rounded-md border p-1 bg-ui-bg-base"
             >
               <option value="bar">Bar</option>

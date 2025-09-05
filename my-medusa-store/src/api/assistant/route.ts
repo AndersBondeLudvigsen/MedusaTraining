@@ -121,7 +121,9 @@ function safeParseJSON(maybeJson: unknown): any | undefined {
 // MCP result: { content: [{ type:"text", text: "...json..." }], isError? }
 function extractToolJsonPayload(toolResult: any): any | undefined {
   try {
-    const textItem = toolResult?.content?.find?.((c: any) => c?.type === "text");
+    const textItem = toolResult?.content?.find?.(
+      (c: any) => c?.type === "text"
+    );
     if (textItem?.text) return safeParseJSON(textItem.text);
   } catch {}
   return undefined;
@@ -130,8 +132,25 @@ function extractToolJsonPayload(toolResult: any): any | undefined {
 // Normalize LLM tool args to match Medusa Admin expectations
 function normalizeToolArgs(input: any): any {
   const needsDollar = new Set([
-    "gt","gte","lt","lte","eq","ne","in","nin","not","like","ilike","re","fulltext",
-    "overlap","contains","contained","exists","and","or",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "eq",
+    "ne",
+    "in",
+    "nin",
+    "not",
+    "like",
+    "ilike",
+    "re",
+    "fulltext",
+    "overlap",
+    "contains",
+    "contained",
+    "exists",
+    "and",
+    "or",
   ]);
 
   const toNumberIfNumericString = (v: unknown) =>
@@ -153,7 +172,8 @@ function normalizeToolArgs(input: any): any {
       return out;
     }
     const last = keyPath[keyPath.length - 1];
-    if (last === "limit" || last === "offset") return toNumberIfNumericString(val);
+    if (last === "limit" || last === "offset")
+      return toNumberIfNumericString(val);
     return val;
   };
 
@@ -162,9 +182,47 @@ function normalizeToolArgs(input: any): any {
 
 /* ---------------- Chart building (generic only + child-objects) ---------------- */
 
-const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const X_PRIORITIES = ["month","label","date","day","bucket","name","email","id","year"];
-const Y_PRIORITIES = ["count","total","amount","revenue","value","quantity","orders","customers","items","sum","avg","median","min","max"];
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+const X_PRIORITIES = [
+  "month",
+  "label",
+  "date",
+  "day",
+  "bucket",
+  "name",
+  "email",
+  "id",
+  "year",
+];
+const Y_PRIORITIES = [
+  "count",
+  "total",
+  "amount",
+  "revenue",
+  "value",
+  "quantity",
+  "orders",
+  "customers",
+  "items",
+  "sum",
+  "avg",
+  "median",
+  "min",
+  "max",
+];
 
 const isObj = (v: any): v is Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v);
@@ -189,10 +247,19 @@ function monthify(key: string, v: any): any {
 }
 
 function pickXY(row: Record<string, any>) {
-  let xKey = X_PRIORITIES.find((k) => k in row && (typeof row[k] === "string" || typeof row[k] === "number"));
+  let xKey = X_PRIORITIES.find(
+    (k) =>
+      k in row && (typeof row[k] === "string" || typeof row[k] === "number")
+  );
   let yKey = Y_PRIORITIES.find((k) => k in row && typeof row[k] === "number");
-  if (!xKey) xKey = Object.keys(row).find((k) => typeof row[k] === "string" || typeof row[k] === "number");
-  if (!yKey) yKey = Object.keys(row).find((k) => typeof row[k] === "number" && k !== xKey);
+  if (!xKey)
+    xKey = Object.keys(row).find(
+      (k) => typeof row[k] === "string" || typeof row[k] === "number"
+    );
+  if (!yKey)
+    yKey = Object.keys(row).find(
+      (k) => typeof row[k] === "number" && k !== xKey
+    );
   return { xKey, yKey };
 }
 
@@ -206,17 +273,31 @@ function coerceChartSpec(payload: any): ChartSpec | undefined {
 }
 
 /** If a tool returns a neutral series, use it. */
-function chartFromSeries(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
+function chartFromSeries(
+  payload: any,
+  chartType: ChartType,
+  title?: string
+): ChartSpec | undefined {
   const series = Array.isArray(payload?.series) ? payload.series : undefined;
   if (!series || !series.length || !isObj(series[0])) return undefined;
 
   const sample = series[0] as Record<string, any>;
-  const xKey = typeof payload?.xKey === "string"
-    ? payload.xKey
-    : ("label" in sample ? "label" : "x" in sample ? "x" : undefined);
-  const yKey = typeof payload?.yKey === "string"
-    ? payload.yKey
-    : ("count" in sample ? "count" : "y" in sample ? "y" : undefined);
+  const xKey =
+    typeof payload?.xKey === "string"
+      ? payload.xKey
+      : "label" in sample
+      ? "label"
+      : "x" in sample
+      ? "x"
+      : undefined;
+  const yKey =
+    typeof payload?.yKey === "string"
+      ? payload.yKey
+      : "count" in sample
+      ? "count"
+      : "y" in sample
+      ? "y"
+      : undefined;
   if (!xKey || !yKey) return undefined;
 
   const rows = series.slice(0, 100).map((r: any) => ({
@@ -235,16 +316,24 @@ function chartFromSeries(payload: any, chartType: ChartType, title?: string): Ch
 }
 
 /** NEW: generic-from-child-objects. */
-function chartFromChildObjects(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
+function chartFromChildObjects(
+  payload: any,
+  chartType: ChartType,
+  title?: string
+): ChartSpec | undefined {
   if (!isObj(payload)) return undefined;
 
-  const entries = Object.entries(payload)
-    .filter(([_, v]) => isObj(v)) as [string, Record<string, any>][];
+  const entries = Object.entries(payload).filter(([_, v]) => isObj(v)) as [
+    string,
+    Record<string, any>
+  ][];
   if (entries.length < 2 || entries.length > 24) return undefined;
 
   let chosenY: string | undefined;
   for (const y of Y_PRIORITIES) {
-    const hits = entries.filter(([_, obj]) => typeof obj[y] === "number").length;
+    const hits = entries.filter(
+      ([_, obj]) => typeof obj[y] === "number"
+    ).length;
     if (hits >= Math.max(2, Math.ceil(entries.length / 2))) {
       chosenY = y;
       break;
@@ -254,9 +343,15 @@ function chartFromChildObjects(payload: any, chartType: ChartType, title?: strin
 
   const rows = entries.map(([key, obj]) => {
     let label: string | number | undefined =
-      obj.label ?? obj.name ?? (obj.month != null ? monthify("month", obj.month) : undefined) ?? obj.year;
+      obj.label ??
+      obj.name ??
+      (obj.month != null ? monthify("month", obj.month) : undefined) ??
+      obj.year;
     if (label == null) label = key;
-    const yVal = typeof obj[chosenY!] === "number" ? obj[chosenY!] : Number(obj[chosenY!]) || 0;
+    const yVal =
+      typeof obj[chosenY!] === "number"
+        ? obj[chosenY!]
+        : Number(obj[chosenY!]) || 0;
     return { label, [chosenY!]: yVal };
   });
 
@@ -273,7 +368,11 @@ function chartFromChildObjects(payload: any, chartType: ChartType, title?: strin
 }
 
 /** Generic fallback: root count OR any array of objects. */
-function genericChartFromPayload(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
+function genericChartFromPayload(
+  payload: any,
+  chartType: ChartType,
+  title?: string
+): ChartSpec | undefined {
   if (typeof payload?.count === "number") {
     return {
       type: "chart",
@@ -339,7 +438,9 @@ function buildChartFromLatestTool(
 /* ---------------- Assistant validation helpers ---------------- */
 
 /** Pull a few commonly-used numeric fields from a payload as ground truth. */
-function collectGroundTruthNumbers(payload: any): Record<string, number> | undefined {
+function collectGroundTruthNumbers(
+  payload: any
+): Record<string, number> | undefined {
   if (!payload || typeof payload !== "object") return undefined;
 
   const keys = [
@@ -498,7 +599,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
     console.log(`\n🔧 TOOL AVAILABILITY:`);
     console.log(`   Total tools available: ${availableTools.length}`);
-    console.log(`   Category guidance: ${category || "general"} (all tools accessible)`);
+    console.log(
+      `   Category guidance: ${category || "general"} (all tools accessible)`
+    );
     // Note: Category only affects the AI prompt, not tool filtering
 
     const history: HistoryEntry[] = [];
