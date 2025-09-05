@@ -1,37 +1,87 @@
 import { useEffect, useMemo, useState } from "react";
 import { defineRouteConfig } from "@medusajs/admin-sdk";
-import { Button, Container, Heading, Text } from "@medusajs/ui";
+import { Button, Container, Heading, Text, Badge } from "@medusajs/ui";
 import { Beaker } from "@medusajs/icons";
+
+/* ---------------- Types (aligns with /internal/metrics response) ---------------- */
+
+type ToolStats = { total: number; errors: number; avgLatency: number };
+
+type ToolEvent = {
+  id: string;
+  timestamp: number;
+  tool: string;
+  args: any;
+  result?: any;
+  success: boolean;
+  errorMessage?: string;
+  durationMs?: number;
+};
+
+type Anomaly = {
+  id: string;
+  timestamp: number;
+  type: string;
+  message: string;
+  details?: any;
+};
+
+type NumberDelta = { ai: number; tool: number; diff: number; withinTolerance: boolean };
+
+type ValidationCheck = {
+  label: string;
+  ai?: number;
+  tool?: number;
+  tolerance?: number;
+  delta?: NumberDelta;
+  ok: boolean;
+};
+
+type AssistantTurn = {
+  id: string;
+  timestamp: number;
+  userMessage: any;
+  assistantMessage?: any;
+  toolsUsed: string[];
+  extractedNumbers?: Record<string, number>;
+  groundedNumbers?: Record<string, number>;
+  validations: ValidationCheck[];
+};
+
+type AssistantSummary = {
+  turns: AssistantTurn[];
+  validation: { total: number; ok: number; fail: number };
+};
 
 type MetricsSummary = {
   totals: { totalEvents: number; lastHour: number };
-  byTool: Record<string, { total: number; errors: number; avgLatency: number }>;
+  byTool: Record<string, ToolStats>;
   rates: {
     thisMinute: Record<string, number>;
     baselineAvgPerMinute: Record<string, number>;
   };
-  recentEvents: Array<{
-    id: string;
-    timestamp: number;
-    tool: string;
-    args: any;
-    result?: any;
-    success: boolean;
-    errorMessage?: string;
-    durationMs?: number;
-  }>;
-  anomalies: Array<{
-    id: string;
-    timestamp: number;
-    type: string;
-    message: string;
-    details?: any;
-  }>;
+  recentEvents: ToolEvent[];
+  anomalies: Anomaly[];
+  assistant?: AssistantSummary;
 };
+
+/* ---------------- Utils ---------------- */
 
 const formatMs = (v?: number) =>
   typeof v === "number" ? `${Math.round(v)} ms` : "";
 const timeStr = (ts: number) => new Date(ts).toLocaleTimeString();
+
+function jsonPreview(v: unknown, max = 400) {
+  const s = JSON.stringify(v, null, 2);
+  if (!s) return "";
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+function numberOrDash(v: unknown) {
+  return typeof v === "number" && !Number.isNaN(v) ? String(v) : "—";
+}
+
+/* ---------------- Page ---------------- */
 
 const MetricsPage = () => {
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
@@ -75,8 +125,8 @@ const MetricsPage = () => {
 
       <div className="px-6 py-4 grid gap-4">
         <Text size="small">
-          Observability for the assistant: tool calls, rates, errors, and
-          alerts. Uses the same numbers the backend sees.
+          Observability for the assistant: tool calls, rates, errors, alerts — plus
+          assistant turn validations against grounded numbers.
         </Text>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -154,8 +204,7 @@ const MetricsPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(summary?.rates.thisMinute || {}).length ===
-                  0 && (
+                {Object.entries(summary?.rates.thisMinute || {}).length === 0 && (
                   <tr>
                     <td className="p-2" colSpan={3}>
                       No calls yet
@@ -228,8 +277,7 @@ const MetricsPage = () => {
                     [{timeStr(a.timestamp)}]
                   </span>{" "}
                   <b>{a.type}</b>: {a.message}
-                  {a.type === "negative-inventory" &&
-                  a.details?.fields?.length ? (
+                  {a.type === "negative-inventory" && a.details?.fields?.length ? (
                     <div className="mt-1 ml-4">
                       <details>
                         <summary className="cursor-pointer text-ui-fg-subtle">
@@ -251,6 +299,135 @@ const MetricsPage = () => {
               ))}
             </ul>
           </div>
+        </section>
+
+        {/* Assistant Validation Summary */}
+        <section className="grid gap-1">
+          <Heading level="h2">Assistant — Validation Summary</Heading>
+          {!summary?.assistant ? (
+            <Text size="small">No assistant data yet</Text>
+          ) : (
+            <div className="flex gap-6 text-sm">
+              <div>
+                <span className="text-ui-fg-subtle">Checks:</span>{" "}
+                <span className="font-medium">
+                  {summary.assistant.validation.total}
+                </span>
+              </div>
+              <div>
+                <span className="text-ui-fg-subtle">OK:</span>{" "}
+                <span className="font-medium text-ui-fg-success">
+                  {summary.assistant.validation.ok}
+                </span>
+              </div>
+              <div>
+                <span className="text-ui-fg-subtle">Fail:</span>{" "}
+                <span className="font-medium text-ui-fg-error">
+                  {summary.assistant.validation.fail}
+                </span>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Assistant Recent Turns */}
+        <section className="grid gap-2">
+          <Heading level="h2">Assistant — Recent Turns</Heading>
+          {!summary?.assistant?.turns?.length ? (
+            <Text size="small">No turns yet</Text>
+          ) : (
+            <div className="overflow-auto border rounded-md">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-ui-bg-subtle text-left align-bottom">
+                    <th className="p-2">Time</th>
+                    <th className="p-2">Tools Used</th>
+                    <th className="p-2">Grounded Numbers</th>
+                    <th className="p-2">Extracted Numbers</th>
+                    <th className="p-2">Validations</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.assistant.turns.map((t) => (
+                    <tr key={t.id} className="border-t align-top">
+                      <td className="p-2 whitespace-nowrap">{timeStr(t.timestamp)}</td>
+                      <td className="p-2">
+                        {t.toolsUsed?.length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {t.toolsUsed.map((name) => (
+                              <Badge key={name} size="small" variant="secondary">
+                                {name}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-ui-fg-subtle">—</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {t.groundedNumbers ? (
+                          <pre className="max-h-40 overflow-auto">
+                            {jsonPreview(t.groundedNumbers)}
+                          </pre>
+                        ) : (
+                          <span className="text-ui-fg-subtle">—</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {t.extractedNumbers ? (
+                          <pre className="max-h-40 overflow-auto">
+                            {jsonPreview(t.extractedNumbers)}
+                          </pre>
+                        ) : (
+                          <span className="text-ui-fg-subtle">—</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {!t.validations?.length ? (
+                          <span className="text-ui-fg-subtle">—</span>
+                        ) : (
+                          <div className="overflow-auto">
+                            <table className="min-w-[420px] text-xs border rounded-md">
+                              <thead>
+                                <tr className="bg-ui-bg-subtle text-left">
+                                  <th className="p-1">Label</th>
+                                  <th className="p-1">AI</th>
+                                  <th className="p-1">Tool</th>
+                                  <th className="p-1">Diff</th>
+                                  <th className="p-1">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {t.validations.map((v, i) => (
+                                  <tr key={i} className="border-t">
+                                    <td className="p-1">{v.label}</td>
+                                    <td className="p-1">{numberOrDash(v.ai)}</td>
+                                    <td className="p-1">{numberOrDash(v.tool)}</td>
+                                    <td className="p-1">
+                                      {typeof v?.delta?.diff === "number"
+                                        ? v.delta.diff
+                                        : "—"}
+                                    </td>
+                                    <td className="p-1">
+                                      {v.ok ? (
+                                        <Badge size="small" variant="green">OK</Badge>
+                                      ) : (
+                                        <Badge size="small" variant="red">FAIL</Badge>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
         {/* Recent Events */}
