@@ -11,21 +11,21 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
   const inventoryModuleService = container.resolve(Modules.INVENTORY);
   const fulfillmentModuleService = container.resolve(Modules.FULFILLMENT);
-  
+
   // Specific order ID to test with
-  const orderId = "order_01K4C8KQT4S3E3CAMQXQKKGPSW"
-  
+  const orderId = "order_01K4CCEGE588DVTS8M4ZB0KBNA";
+
   logger.info(`🚀 Testing fulfillment with reservation for order: ${orderId}`);
 
   try {
     // Step 1: Get order details using query.graph (more reliable)
     logger.info(`📋 Step 1: Fetching order details...`);
-    const { data: orders } = await query.graph({
+    const { data: orders } = (await query.graph({
       entity: "order",
       fields: [
         "id",
         "display_id",
-        "status", 
+        "status",
         "total",
         "currency_code",
         "payment_status",
@@ -36,7 +36,7 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
         "payment_collections.amount",
       ],
       filters: { id: orderId },
-    }) as any;
+    })) as any;
 
     if (!orders || orders.length === 0) {
       logger.error(`❌ Order not found: ${orderId}`);
@@ -50,45 +50,69 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
     logger.info(`  Status: ${order.status}`);
     logger.info(`  Payment Status: ${order.payment_status}`);
     logger.info(`  Fulfillment Status: ${order.fulfillment_status}`);
-    logger.info(`  Total: ${((order.total || 0) / 100).toFixed(2)} ${order.currency_code?.toUpperCase() || 'EUR'}`);
-    logger.info(`  Existing Fulfillments: ${(order.fulfillments || []).length}`);
-    logger.info(`  Payment Collections: ${(order.payment_collections || []).length}`);
-    
+    logger.info(
+      `  Total: ${((order.total || 0) / 100).toFixed(2)} ${
+        order.currency_code?.toUpperCase() || "EUR"
+      }`
+    );
+    logger.info(
+      `  Existing Fulfillments: ${(order.fulfillments || []).length}`
+    );
+    logger.info(
+      `  Payment Collections: ${(order.payment_collections || []).length}`
+    );
+
     // Debug: Show all order fields to see what's available
-    logger.info(`🔍 DEBUG: Available order fields: ${Object.keys(order).join(', ')}`);
-    
+    logger.info(
+      `🔍 DEBUG: Available order fields: ${Object.keys(order).join(", ")}`
+    );
+
     // Check payment status - try multiple ways to get it
     let paymentStatus = order.payment_status;
-    if (!paymentStatus && order.payment_collections && order.payment_collections.length > 0) {
+    if (
+      !paymentStatus &&
+      order.payment_collections &&
+      order.payment_collections.length > 0
+    ) {
       paymentStatus = order.payment_collections[0].status;
       logger.info(`  💳 Payment status from collection: ${paymentStatus}`);
     }
-    
+
     // Check payment status
     if (paymentStatus !== "captured" && paymentStatus !== "completed") {
-      logger.error(`❌ Order payment status is '${paymentStatus}' - only captured/completed orders can be fulfilled.`);
-      logger.info(`💡 If you know the order is paid, we can continue anyway for testing...`);
+      logger.error(
+        `❌ Order payment status is '${paymentStatus}' - only captured/completed orders can be fulfilled.`
+      );
+      logger.info(
+        `💡 If you know the order is paid, we can continue anyway for testing...`
+      );
       // Let's continue anyway for testing since you confirmed it's captured
-      logger.info(`🚀 Continuing with fulfillment (payment status override for testing)...`);
+      logger.info(
+        `🚀 Continuing with fulfillment (payment status override for testing)...`
+      );
     } else {
       logger.info(`✅ Payment status verified: ${paymentStatus}`);
     }
 
     // Step 2: Check inventory setup
     logger.info(`📦 Step 2: Checking inventory setup...`);
-    
-    const { data: stockLocations } = await query.graph({
+
+    const { data: stockLocations } = (await query.graph({
       entity: "stock_location",
       fields: ["id", "name"],
-    }) as any;
+    })) as any;
 
     if (!stockLocations || stockLocations.length === 0) {
-      logger.error(`❌ No stock locations found. You need at least one stock location.`);
+      logger.error(
+        `❌ No stock locations found. You need at least one stock location.`
+      );
       return;
     }
 
     const stockLocationId = stockLocations[0].id;
-    logger.info(`✅ Using stock location: ${stockLocations[0].name} (${stockLocationId})`);
+    logger.info(
+      `✅ Using stock location: ${stockLocations[0].name} (${stockLocationId})`
+    );
 
     if (!order.items || order.items.length === 0) {
       logger.error(`❌ No items found in order!`);
@@ -107,11 +131,11 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
       logger.info(`\n  Item ${index + 1}:`);
       logger.info(`    🆔 ID: ${item.id}`);
       logger.info(`    📦 Title: ${item.title}`);
-      logger.info(`    🏷️ Variant: ${item.variant_title || 'N/A'}`);
-      logger.info(`    🔢 SKU: ${item.variant_sku || 'N/A'}`);
+      logger.info(`    🏷️ Variant: ${item.variant_title || "N/A"}`);
+      logger.info(`    🔢 SKU: ${item.variant_sku || "N/A"}`);
       logger.info(`    📊 Quantity: ${item.quantity}`);
       logger.info(`    ✅ Fulfilled Quantity: ${item.fulfilled_quantity || 0}`);
-      
+
       const quantity = item.quantity || 0;
       const fulfilledQuantity = item.fulfilled_quantity || 0;
       const remainingQuantity = quantity - fulfilledQuantity;
@@ -124,15 +148,19 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
       }
 
       // Find inventory item
-      logger.info(`    🔍 Finding inventory item for SKU: ${item.variant_sku}...`);
-      const { data: inventoryItems } = await query.graph({
+      logger.info(
+        `    🔍 Finding inventory item for SKU: ${item.variant_sku}...`
+      );
+      const { data: inventoryItems } = (await query.graph({
         entity: "inventory_item",
         fields: ["id", "sku"],
         filters: { sku: item.variant_sku },
-      }) as any;
+      })) as any;
 
       if (!inventoryItems || inventoryItems.length === 0) {
-        logger.error(`    ❌ No inventory item found for SKU: ${item.variant_sku}`);
+        logger.error(
+          `    ❌ No inventory item found for SKU: ${item.variant_sku}`
+        );
         continue;
       }
 
@@ -142,32 +170,39 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
       // Check existing reservations
       logger.info(`    🔍 Checking existing reservations...`);
       let reservationExists = false;
-      
+
       try {
-        const existingReservations = await inventoryModuleService.listReservationItems({
-          line_item_id: item.id,
-        });
+        const existingReservations =
+          await inventoryModuleService.listReservationItems({
+            line_item_id: item.id,
+          });
 
         if (existingReservations && existingReservations.length > 0) {
           logger.info(`    ✅ Reservation already exists for this item`);
           reservationExists = true;
         }
       } catch (error: any) {
-        logger.info(`    ⚠️ Could not check existing reservations: ${error.message}`);
+        logger.info(
+          `    ⚠️ Could not check existing reservations: ${error.message}`
+        );
       }
 
       if (!reservationExists) {
         // Check stock levels before creating reservation
         logger.info(`    📊 Checking stock levels...`);
         try {
-          const { data: inventoryLevels } = await query.graph({
+          const { data: inventoryLevels } = (await query.graph({
             entity: "inventory_level",
-            fields: ["stocked_quantity", "reserved_quantity", "available_quantity"],
-            filters: { 
+            fields: [
+              "stocked_quantity",
+              "reserved_quantity",
+              "available_quantity",
+            ],
+            filters: {
               inventory_item_id: inventoryItemId,
-              location_id: stockLocationId 
+              location_id: stockLocationId,
             },
-          }) as any;
+          })) as any;
 
           if (inventoryLevels && inventoryLevels.length > 0) {
             const level = inventoryLevels[0];
@@ -175,39 +210,52 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
             logger.info(`      - Stocked: ${level.stocked_quantity}`);
             logger.info(`      - Reserved: ${level.reserved_quantity}`);
             logger.info(`      - Available: ${level.available_quantity}`);
-            
+
             if (level.available_quantity < remainingQuantity) {
-              logger.error(`    ❌ Insufficient stock! Need ${remainingQuantity}, have ${level.available_quantity}`);
+              logger.error(
+                `    ❌ Insufficient stock! Need ${remainingQuantity}, have ${level.available_quantity}`
+              );
               continue;
             }
           } else {
-            logger.error(`    ❌ No inventory level found for this item at this location`);
+            logger.error(
+              `    ❌ No inventory level found for this item at this location`
+            );
             continue;
           }
         } catch (stockError: any) {
-          logger.error(`    ❌ Failed to check stock levels: ${stockError.message}`);
+          logger.error(
+            `    ❌ Failed to check stock levels: ${stockError.message}`
+          );
           continue;
         }
 
         // Create reservation
-        logger.info(`    🔄 Creating reservation for ${remainingQuantity} units...`);
+        logger.info(
+          `    🔄 Creating reservation for ${remainingQuantity} units...`
+        );
         try {
-          const reservation = await inventoryModuleService.createReservationItems([{
-            line_item_id: item.id,
-            inventory_item_id: inventoryItemId,
-            location_id: stockLocationId,
-            quantity: remainingQuantity,
-            description: `Reservation for order ${order.display_id} - ${item.title}`,
-            metadata: {
-              order_id: orderId,
-              item_id: item.id,
-            },
-          }]);
+          const reservation =
+            await inventoryModuleService.createReservationItems([
+              {
+                line_item_id: item.id,
+                inventory_item_id: inventoryItemId,
+                location_id: stockLocationId,
+                quantity: remainingQuantity,
+                description: `Reservation for order ${order.display_id} - ${item.title}`,
+                metadata: {
+                  order_id: orderId,
+                  item_id: item.id,
+                },
+              },
+            ]);
 
           logger.info(`    ✅ Created reservation: ${reservation[0].id}`);
           reservations.push(reservation[0]);
         } catch (reservationError: any) {
-          logger.error(`    ❌ Failed to create reservation: ${reservationError.message}`);
+          logger.error(
+            `    ❌ Failed to create reservation: ${reservationError.message}`
+          );
           continue;
         }
       }
@@ -216,25 +264,33 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
       logger.info(`    ➕ Adding to fulfillment queue`);
       itemsToFulfill.push({
         id: item.id,
-        quantity: remainingQuantity
+        quantity: remainingQuantity,
       });
     }
 
     if (itemsToFulfill.length === 0) {
-      logger.info(`❌ No items can be fulfilled (no stock or already fulfilled)`);
+      logger.info(
+        `❌ No items can be fulfilled (no stock or already fulfilled)`
+      );
       return;
     }
 
     // Step 4: Create fulfillment
-    logger.info(`\n� Step 4: Creating fulfillment for ${itemsToFulfill.length} item(s)...`);
+    logger.info(
+      `\n� Step 4: Creating fulfillment for ${itemsToFulfill.length} item(s)...`
+    );
     logger.info(`📋 Items to fulfill:`);
     itemsToFulfill.forEach((item, index) => {
-      logger.info(`  ${index + 1}. Item ID: ${item.id}, Quantity: ${item.quantity}`);
+      logger.info(
+        `  ${index + 1}. Item ID: ${item.id}, Quantity: ${item.quantity}`
+      );
     });
 
     logger.info(`🔄 Creating fulfillment workflow...`);
 
-    const fulfillmentResult = await createOrderFulfillmentWorkflow(container).run({
+    const fulfillmentResult = await createOrderFulfillmentWorkflow(
+      container
+    ).run({
       input: {
         order_id: orderId,
         items: itemsToFulfill,
@@ -242,11 +298,13 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
     });
 
     logger.info(`🎉 SUCCESS! Fulfillment created!`);
-    logger.info(`📝 Fulfillment ID: ${fulfillmentResult.result?.id || 'Generated'}`);
-    
+    logger.info(
+      `📝 Fulfillment ID: ${fulfillmentResult.result?.id || "Generated"}`
+    );
+
     // Step 4.5: Mark fulfillment as delivered
     logger.info(`� Step 4.5: Marking fulfillment as delivered...`);
-    
+
     const fulfillmentId = fulfillmentResult.result?.id;
     if (fulfillmentId) {
       try {
@@ -254,20 +312,22 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
         await fulfillmentModuleService.updateFulfillment(fulfillmentId, {
           delivered_at: new Date(),
         });
-        
+
         logger.info(`🎉 SUCCESS! Fulfillment marked as delivered!`);
         logger.info(`✅ Fulfillment status should now be 'delivered'`);
       } catch (deliveryError: any) {
-        logger.error(`❌ Failed to mark fulfillment as delivered: ${deliveryError.message}`);
+        logger.error(
+          `❌ Failed to mark fulfillment as delivered: ${deliveryError.message}`
+        );
         logger.info(`💡 Fulfillment was created but not marked as delivered`);
       }
     } else {
       logger.warn(`⚠️ No fulfillment ID returned, cannot mark as delivered`);
     }
-    
+
     // Step 5: Verify the fulfillment
     logger.info(`🔍 Step 5: Verifying fulfillment by re-fetching order...`);
-    const { data: updatedOrders } = await query.graph({
+    const { data: updatedOrders } = (await query.graph({
       entity: "order",
       fields: [
         "id",
@@ -278,19 +338,24 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
         "fulfillments.items.quantity",
       ],
       filters: { id: orderId },
-    }) as any;
+    })) as any;
 
     if (updatedOrders && updatedOrders.length > 0) {
       const updatedOrder = updatedOrders[0];
       logger.info(`📊 Updated order status:`);
       logger.info(`  Fulfillment Status: ${updatedOrder.fulfillment_status}`);
-      logger.info(`  Total Fulfillments: ${(updatedOrder.fulfillments || []).length}`);
-      
+      logger.info(
+        `  Total Fulfillments: ${(updatedOrder.fulfillments || []).length}`
+      );
+
       if (updatedOrder.items) {
         updatedOrder.items.forEach((item: any, index: number) => {
           // Try to get fulfilled quantity from the detail object or direct field
-          const fulfilledQty = item.detail?.fulfilled_quantity || item.fulfilled_quantity || 0;
-          logger.info(`  Item ${index + 1} fulfilled quantity: ${fulfilledQty}`);
+          const fulfilledQty =
+            item.detail?.fulfilled_quantity || item.fulfilled_quantity || 0;
+          logger.info(
+            `  Item ${index + 1} fulfilled quantity: ${fulfilledQty}`
+          );
         });
       }
 
@@ -299,7 +364,11 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
           logger.info(`  Fulfillment ${index + 1}: ${fulfillment.id}`);
           if (fulfillment.items) {
             fulfillment.items.forEach((item: any, itemIndex: number) => {
-              logger.info(`    - Item ${itemIndex + 1}: ${item.id} (qty: ${item.quantity})`);
+              logger.info(
+                `    - Item ${itemIndex + 1}: ${item.id} (qty: ${
+                  item.quantity
+                })`
+              );
             });
           }
         });
@@ -309,21 +378,26 @@ export default async function fulfillSpecificOrder({ container }: ExecArgs) {
     logger.info(`\n🎉 FULFILLMENT COMPLETE!`);
     logger.info(`✅ What happened:`);
     logger.info(`  1. ✅ Found ${order.items.length} item(s) in the order`);
-    logger.info(`  2. ✅ Created ${reservations.length} new inventory reservation(s)`);
-    logger.info(`  3. ✅ Successfully fulfilled ${itemsToFulfill.length} item(s)`);
+    logger.info(
+      `  2. ✅ Created ${reservations.length} new inventory reservation(s)`
+    );
+    logger.info(
+      `  3. ✅ Successfully fulfilled ${itemsToFulfill.length} item(s)`
+    );
     logger.info(`  4. ✅ Order status should now be 'fulfilled'`);
-
   } catch (error: any) {
     logger.error(`❌ Error fulfilling order: ${error.message}`);
     logger.error(`📜 Full error: ${error.stack}`);
-    
+
     // Provide more specific error guidance
     if (error.message.includes("inventory")) {
       logger.error(`💡 This may be an inventory issue - check stock levels`);
     } else if (error.message.includes("fulfillment")) {
       logger.error(`💡 This may be a fulfillment configuration issue`);
     } else if (error.message.includes("reservation")) {
-      logger.error(`💡 This may be a reservation issue - check inventory setup`);
+      logger.error(
+        `💡 This may be a reservation issue - check inventory setup`
+      );
     }
   }
 }
