@@ -13,10 +13,31 @@ const MEDUSA_BACKEND_URL =
 const MEDUSA_USERNAME = process.env.MEDUSA_USERNAME ?? "medusa_user";
 const MEDUSA_PASSWORD = process.env.MEDUSA_PASSWORD ?? "medusa_pass";
 
+type AdminVariantMaybe = {
+  id?: string;
+  product_id?: string;
+  product?: { id?: string; title?: string } | null;
+  sku?: string | null;
+  title?: string | null;
+};
+
+type AdminOrderItemMaybe = {
+  id?: string;
+  quantity?: number;
+  unit_price?: number;
+  total?: number;
+  title?: string | null;
+  sku?: string | null;
+  variant_id?: string | null;
+  product_id?: string | null; // some setups include this
+  variant?: AdminVariantMaybe | null; // when expanded/detail
+};
+
 type AdminOrderMinimal = {
   id?: string;
   created_at?: string;
   canceled_at?: string | null;
+  items?: AdminOrderItemMaybe[]; // present on detail; sometimes on list depending on setup
 };
 
 export default class MedusaAdminService {
@@ -38,7 +59,6 @@ export default class MedusaAdminService {
       password: MEDUSA_PASSWORD,
     })) as any;
 
-    // Prefer explicit token fields; fall back to string if needed.
     const token =
       res?.token ?? res?.access_token ?? res?.jwt ?? res?.toString?.();
     if (typeof token === "string" && token && token !== "[object Object]") {
@@ -107,8 +127,8 @@ export default class MedusaAdminService {
   }
 
   /**
-   * Fetch ALL orders in [fromIso, toIso) (paged). We do client-side filtering by created_at
-   * for correctness across Medusa variants, and exclude orders with canceled_at set.
+   * Fetch ALL orders in [fromIso, toIso) (paged). We double-check client-side by created_at
+   * for correctness and exclude orders with canceled_at set.
    */
   private async fetchOrdersInRange(
     fromIso: string,
@@ -118,11 +138,8 @@ export default class MedusaAdminService {
     let offset = 0;
     const acc: AdminOrderMinimal[] = [];
 
-    // Use native operators without "$" so the server can filter when supported.
     const baseQuery = {
       created_at: { gte: fromIso, lt: toIso },
-      // If your Admin API supports it, uncomment to exclude canceled server-side too:
-      // canceled_at: { exists: false },
     } as const;
 
     while (true) {
@@ -135,12 +152,16 @@ export default class MedusaAdminService {
       const batch = Array.isArray(data?.orders) ? data.orders : [];
       if (batch.length === 0) break;
 
-      // Local filter to be 100% correct even if server ignores filters.
       for (const o of batch) {
         if (!o?.created_at) continue;
         if (o?.canceled_at) continue; // exclude canceled
         if (this.inRangeUtc(o.created_at, fromIso, toIso)) {
-          acc.push({ id: o.id, created_at: o.created_at, canceled_at: o.canceled_at });
+          acc.push({
+            id: o.id,
+            created_at: o.created_at,
+            canceled_at: o.canceled_at,
+            items: o.items, // may be undefined on v2 list
+          });
         }
       }
 
@@ -155,6 +176,47 @@ export default class MedusaAdminService {
   private async countOrdersInRange(fromIso: string, toIso: string): Promise<number> {
     const orders = await this.fetchOrdersInRange(fromIso, toIso);
     return orders.length;
+  }
+
+  /**
+   * Fetch orders with items present. v2 may not allow `expand` on list responses, so:
+   *  - list orders (no expand)
+   *  - for any order missing `items`, retrieve the order detail `/admin/orders/{id}`
+   *    to get `items` (and possibly variant/product info).
+   */
+  private async fetchOrdersWithItemsInRange(
+    fromIso: string,
+    toIso: string
+  ): Promise<AdminOrderMinimal[]> {
+    const list = await this.fetchOrdersInRange(fromIso, toIso);
+    const acc: AdminOrderMinimal[] = [];
+
+    for (const o of list) {
+      if (Array.isArray(o.items) && o.items.length > 0) {
+        acc.push(o);
+        continue;
+      }
+      if (!o.id) continue;
+
+      // Retrieve detail for items
+      try {
+        const detail = await this.adminGet<{ order?: AdminOrderMinimal }>(
+          `/admin/orders/${encodeURIComponent(o.id)}`
+        );
+        const full = detail?.order ?? {};
+        acc.push({
+          id: o.id,
+          created_at: o.created_at,
+          canceled_at: o.canceled_at,
+          items: Array.isArray(full.items) ? full.items : [],
+        });
+      } catch {
+        // If detail fails, fall back to no items (ignored in aggregation)
+        acc.push({ ...o, items: [] });
+      }
+    }
+
+    return acc;
   }
 
   // ---------- Tool generation (OpenAPI + custom) ----------
@@ -424,7 +486,7 @@ export default class MedusaAdminService {
         return " **BATCH OPERATION**: Only use this for bulk operations with multiple items. Requires arrays: create[], update[], delete[]. For single operations, use the non-batch version.";
       }
       if (operationId.includes("PostProducts")) {
-        return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title": "Product Name", "options": [{"title": "Size","values": ["S","M","L"]}]}';
+        return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title":"Product Name","options":[{"title":"Size","values":["S","M","L"]}]}';
       }
       if (operationId.includes("PostCustomers")) {
         return " **REQUIRED**: email (string). Optional: first_name, last_name, phone. Do not provide metadata as string.";
@@ -436,37 +498,307 @@ export default class MedusaAdminService {
     return "";
   }
 
-  /**
-   * Custom analytics tools (general & composable).
-   * Here we add: orders_count — counts non-canceled orders in [start,end) UTC.
-   */
-  private defineAnalyticsTools(): Array<ReturnType<typeof defineTool>> {
-    const orders_count = defineTool((z) => ({
-      name: "orders_count",
-      description:
-        "Count non-canceled orders in a UTC date range [start, end). Returns { count }.",
-      inputSchema: {
-        start: z.string().datetime(), // inclusive
-        end: z.string().datetime(), // exclusive
-      },
-      handler: async (input: Record<string, unknown>): Promise<unknown> => {
-        const schema = z.object({
-          start: z.string().datetime(),
-          end: z.string().datetime(),
-        });
-        const parsed = schema.safeParse(input);
-        if (!parsed.success) {
-          throw new Error(`Invalid input: ${parsed.error.message}`);
+/**
+ * Custom analytics tools (general & composable).
+ * - orders_count: counts non-canceled orders in [start,end) UTC.
+ * - sales_aggregate: top entities by metric with actable IDs.
+ *
+ * Accepts RANGE aliases:  (start,end) | (start_date,end_date) | (from,to)
+ * Accepts GROUP aliases:  group_by | grouping | group | groupby  (values like "product", "product_id", "variant", "variant_id")
+ * Accepts METRIC aliases: metric | measure | by | agg | aggregate ("quantity" | "qty" | "units" | "orders" | "order_count" | "revenue" | "sales" | "amount" | "gmv")
+ */
+private defineAnalyticsTools(): Array<ReturnType<typeof defineTool>> {
+  // --- alias coercers ---
+  const coerceRange = (input: Record<string, unknown>) => {
+    const s =
+      (input.start as string | undefined) ||
+      (input.start_date as string | undefined) ||
+      (input.from as string | undefined);
+    const e =
+      (input.end as string | undefined) ||
+      (input.end_date as string | undefined) ||
+      (input.to as string | undefined);
+    return { start: s, end: e };
+  };
+
+  const coerceGroupBy = (input: Record<string, unknown>): "product" | "variant" | undefined => {
+    const raw =
+      (input.group_by as string | undefined) ||
+      (input.grouping as string | undefined) ||
+      (input.group as string | undefined) ||
+      (input.groupby as string | undefined);
+    if (!raw) return undefined;
+    const v = String(raw).toLowerCase().trim();
+    if (v.startsWith("product")) return "product";     // "product", "product_id", "products", etc.
+    if (v.startsWith("variant")) return "variant";     // "variant", "variant_id", "variants", etc.
+    return undefined;
+  };
+
+  const coerceMetric = (
+    input: Record<string, unknown>
+  ): "quantity" | "revenue" | "orders" | undefined => {
+    const raw =
+      (input.metric as string | undefined) ||
+      (input.measure as string | undefined) ||
+      (input.by as string | undefined) ||
+      (input.agg as string | undefined) ||
+      (input.aggregate as string | undefined);
+    if (!raw) return undefined;
+    const v = String(raw).toLowerCase().trim();
+    if (["quantity", "qty", "units", "unit"].includes(v)) return "quantity";
+    if (["orders", "order", "order_count", "num_orders"].includes(v)) return "orders";
+    if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v)) return "revenue";
+    return undefined;
+  };
+
+  const orders_count = defineTool((z) => ({
+    name: "orders_count",
+    description:
+      "Count non-canceled orders in a UTC date range [start, end). Returns { count }.",
+    // accept range aliases; validate after coercion
+    inputSchema: {
+      start: z.string().datetime().optional(),
+      end: z.string().datetime().optional(),
+      start_date: z.string().datetime().optional(),
+      end_date: z.string().datetime().optional(),
+      from: z.string().datetime().optional(),
+      to: z.string().datetime().optional(),
+    },
+    handler: async (input: Record<string, unknown>): Promise<unknown> => {
+      const { start, end } = coerceRange(input);
+      if (!start || !end) {
+        throw new Error(
+          "Missing required range. Provide (start,end) or (start_date,end_date) or (from,to) as ISO date-times."
+        );
+      }
+      const schema = z.object({ start: z.string().datetime(), end: z.string().datetime() });
+      const parsed = schema.safeParse({ start, end });
+      if (!parsed.success) throw new Error(`Invalid input: ${parsed.error.message}`);
+      const count = await this.countOrdersInRange(start, end);
+      return { start, end, count };
+    },
+  }));
+
+  const sales_aggregate = defineTool((z) => ({
+    name: "sales_aggregate",
+    description:
+      "Aggregate sales in a UTC date range with grouping and metric. Returns actable IDs.",
+    // accept aliases; validate after coercion
+    inputSchema: {
+      start: z.string().datetime().optional(),
+      end: z.string().datetime().optional(),
+      start_date: z.string().datetime().optional(),
+      end_date: z.string().datetime().optional(),
+      from: z.string().datetime().optional(),
+      to: z.string().datetime().optional(),
+
+      group_by: z.union([z.literal("product"), z.literal("variant")]).optional(),
+      grouping: z.string().optional(),
+      group: z.string().optional(),
+      groupby: z.string().optional(),
+
+      metric: z.union([z.literal("quantity"), z.literal("revenue"), z.literal("orders")]).optional(),
+      measure: z.string().optional(),
+      by: z.string().optional(),
+      agg: z.string().optional(),
+      aggregate: z.string().optional(),
+
+      limit: z.number().int().min(1).max(50).default(5),
+      sort: z.union([z.literal("desc"), z.literal("asc")]).default("desc"),
+    },
+    handler: async (input: Record<string, unknown>): Promise<unknown> => {
+      // ranges
+      const rng = coerceRange(input);
+      if (!rng.start || !rng.end) {
+        throw new Error(
+          "Missing required range. Provide (start,end) or (start_date,end_date) or (from,to) as ISO date-times."
+        );
+      }
+
+      // grouping & metric
+      const group_by = coerceGroupBy(input);
+      const metric = coerceMetric(input);
+      if (!group_by) throw new Error("Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'.");
+      if (!metric) throw new Error("Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'.");
+
+      // other params
+      const limit =
+        typeof input.limit === "number" && Number.isInteger(input.limit)
+          ? Math.max(1, Math.min(50, input.limit))
+          : 5;
+      const sort = (String(input.sort ?? "desc").toLowerCase() === "asc" ? "asc" : "desc") as
+        | "asc"
+        | "desc";
+
+      // re-validate final values
+      const schema = z.object({
+        start: z.string().datetime(),
+        end: z.string().datetime(),
+        group_by: z.union([z.literal("product"), z.literal("variant")]),
+        metric: z.union([z.literal("quantity"), z.literal("revenue"), z.literal("orders")]),
+        limit: z.number().int().min(1).max(50),
+        sort: z.union([z.literal("desc"), z.literal("asc")]),
+      });
+      const parsed = schema.safeParse({
+        start: rng.start,
+        end: rng.end,
+        group_by,
+        metric,
+        limit,
+        sort,
+      });
+      if (!parsed.success) throw new Error(`Invalid input: ${parsed.error.message}`);
+
+      const { start, end } = parsed.data;
+
+      const orders = await this.fetchOrdersWithItemsInRange(start, end);
+
+      // tiny cache: variant -> product (for cases where product_id is missing)
+      const variantToProductCache = new Map<string, { product_id?: string; title?: string | null; sku?: string | null }>();
+      const resolveProductFromVariant = async (variantId: string) => {
+        if (variantToProductCache.has(variantId)) return variantToProductCache.get(variantId)!;
+        try {
+          const r = await this.adminGet<{ variant?: { product_id?: string; product?: { id?: string; title?: string } | null; title?: string | null; sku?: string | null } }>(
+            `/admin/variants/${encodeURIComponent(variantId)}`
+          );
+          const v = r?.variant ?? {};
+          const entry = {
+            product_id: v?.product_id ?? v?.product?.id,
+            title: v?.product?.title ?? v?.title ?? null,
+            sku: v?.sku ?? null,
+          };
+          variantToProductCache.set(variantId, entry);
+          return entry;
+        } catch {
+          const entry = { product_id: undefined, title: null, sku: null };
+          variantToProductCache.set(variantId, entry);
+          return entry;
         }
-        const { start, end } = parsed.data;
+      };
 
-        const count = await this.countOrdersInRange(start, end);
-        return { start, end, count };
-      },
-    }));
+      type Agg = {
+        key: string; // product_id or variant_id
+        product_id?: string;
+        variant_id?: string;
+        sku?: string | null;
+        title?: string | null;
+        quantity: number;
+        revenue: number;
+        orderIds: Set<string>;
+      };
+      const aggMap = new Map<string, Agg>();
 
-    return [orders_count];
-  }
+      const addToAgg = (key: string, patch: Partial<Agg>) => {
+        const curr = aggMap.get(key) ?? {
+          key,
+          quantity: 0,
+          revenue: 0,
+          orderIds: new Set<string>(),
+        };
+        if (patch.quantity) curr.quantity += patch.quantity;
+        if (patch.revenue) curr.revenue += patch.revenue;
+        if (patch.orderIds) patch.orderIds.forEach((id) => curr.orderIds.add(id));
+        if (patch.product_id && !curr.product_id) curr.product_id = patch.product_id;
+        if (patch.variant_id && !curr.variant_id) curr.variant_id = patch.variant_id;
+        if (patch.sku && !curr.sku) curr.sku = patch.sku;
+        if (patch.title && !curr.title) curr.title = patch.title;
+        aggMap.set(key, curr);
+      };
+
+      const toNum = (x: unknown): number => {
+        if (typeof x === "number" && Number.isFinite(x)) return x;
+        const n = Number(x);
+        return Number.isFinite(n) ? n : 0;
+        };
+
+      for (const o of orders) {
+        const oid = o.id ?? "";
+        const items = Array.isArray(o.items) ? o.items : [];
+        for (const it of items) {
+          const qty = toNum(it.quantity);
+          if (qty <= 0) continue;
+
+          const lineTotal =
+            typeof it.total === "number"
+              ? it.total
+              : toNum(it.unit_price) * qty;
+
+          let variantId =
+            (it.variant_id as string | null) ?? it?.variant?.id ?? undefined;
+          let productId =
+            (it.product_id as string | null) ??
+            it?.variant?.product_id ??
+            it?.variant?.product?.id ??
+            undefined;
+
+          // If grouping by product and productId missing but we have variantId, look it up
+          if (group_by === "product" && !productId && variantId) {
+            const resolved = await resolveProductFromVariant(variantId);
+            productId = resolved.product_id ?? productId;
+            if (!it.title && resolved.title) it.title = resolved.title;
+            if (!it.sku && resolved.sku) it.sku = resolved.sku;
+          }
+
+          const sku = it?.sku ?? it?.variant?.sku ?? null;
+          const title =
+            it?.title ?? it?.variant?.title ?? it?.variant?.product?.title ?? null;
+
+          const key = group_by === "variant" ? variantId : productId;
+          if (!key) continue;
+
+          addToAgg(key, {
+            quantity: qty,
+            revenue: toNum(lineTotal),
+            orderIds: new Set<string>(oid ? [oid] : []),
+            product_id: productId,
+            variant_id: variantId,
+            sku,
+            title,
+          });
+        }
+      }
+
+      const rows = Array.from(aggMap.values()).map((r) => {
+        const ordersCount = r.orderIds.size;
+        const score =
+          metric === "quantity" ? r.quantity :
+          metric === "revenue"  ? r.revenue  :
+          ordersCount;
+        return { ...r, score, orders: ordersCount };
+      });
+
+      rows.sort((a, b) => (sort === "desc" ? b.score - a.score : a.score - b.score));
+      const top = rows.slice(0, limit).map((r, i) => ({
+        rank: i + 1,
+        product_id: r.product_id ?? null,
+        variant_id: r.variant_id ?? null,
+        sku: r.sku ?? null,
+        title: r.title ?? null,
+        quantity: r.quantity,
+        revenue: r.revenue,
+        orders: r.orders,
+        metric: metric,
+        value:
+          metric === "quantity" ? r.quantity :
+          metric === "revenue"  ? r.revenue  :
+          r.orders,
+      }));
+
+      return {
+        start: rng.start,
+        end: rng.end,
+        group_by,
+        metric,
+        results: top,
+        xKey: "rank",
+        yKey: "value",
+        title: `Top ${group_by}s by ${metric}`,
+      };
+    },
+  }));
+
+  return [orders_count, sales_aggregate];
+}
 
   defineTools(admin = adminJson): Array<ReturnType<typeof defineTool>> {
     const paths = Object.entries(admin.paths) as [string, SdkRequestType][];
