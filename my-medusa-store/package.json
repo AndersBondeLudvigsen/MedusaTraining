@@ -15,17 +15,18 @@
   "scripts": {
     "build": "medusa build",
     "seed": "medusa exec ./src/scripts/seed.ts",
-    "nuke": "medusa exec ./src/scripts/nuke-db.ts",
-    "nuke:dry": "set NUKE_ALL=1 && set NUKE_DRY_RUN=1 && medusa exec ./src/scripts/nuke-db.ts",
-    "nuke:all": "set NUKE_ALL=1 && medusa exec ./src/scripts/nuke-db.ts",
-    "nuke:preserve": "set NUKE_ALL=1 && set NUKE_PRESERVE_STORE=1 && set NUKE_PRESERVE_USERS=1 && medusa exec ./src/scripts/nuke-db.ts",
+    "nuke:preserve-admins": "set NUKE_ALL=1 && set NUKE_PRESERVE_ADMINS=1 && medusa exec ./src/scripts/nuke-db.ts",
+    "nuke:preserve-admins:store": "set NUKE_ALL=1 && set NUKE_PRESERVE_ADMINS=1 && set NUKE_PRESERVE_STORE=1 && medusa exec ./src/scripts/nuke-db.ts",
     "seedOrders": "medusa exec ./src/scripts/seed-orders.ts",
     "seedCustomers": "medusa exec ./src/scripts/seed-customers.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
     "test:integration:modules": "TEST_TYPE=integration:modules NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
-    "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit"
+    "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit",
+    "test:integration:http:win": "set TEST_TYPE=integration:http && set NODE_OPTIONS=--experimental-vm-modules && set DATABASE_URL=file:./.tmp/test.sqlite && set STORE_CORS=* && set ADMIN_CORS=* && set AUTH_CORS=* && jest --silent=false --runInBand --forceExit",
+    "test:integration:modules:win": "set TEST_TYPE=integration:modules && set NODE_OPTIONS=--experimental-vm-modules && set DATABASE_URL=file:./.tmp/test.sqlite && set STORE_CORS=* && set ADMIN_CORS=* && set AUTH_CORS=* && jest --silent=false --runInBand --forceExit",
+    "test:unit:win": "set TEST_TYPE=unit && set NODE_OPTIONS=--experimental-vm-modules && set DATABASE_URL=file:./.tmp/test.sqlite && set STORE_CORS=* && set ADMIN_CORS=* && set AUTH_CORS=* && jest --silent --runInBand --forceExit"
   },
   "dependencies": {
     "@faker-js/faker": "^10.0.0",
