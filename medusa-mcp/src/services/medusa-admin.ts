@@ -118,6 +118,8 @@ export default class MedusaAdminService {
     /**
      * Fetch ALL orders in [fromIso, toIso) (paged). We DO NOT trust server `count`
      * nor rely on server-side filtering — we also filter client-side by created_at.
+     * NOTE: This method currently excludes canceled orders by simply counting orders returned.
+     * If your backend returns canceled orders in the same list, add a check to skip them.
      */
     private async fetchOrdersInRange(
         fromIso: string,
@@ -423,7 +425,7 @@ export default class MedusaAdminService {
 
                         const response = await this.sdk.client.fetch(finalPath, {
                             method: method,
-                                headers: {
+                            headers: {
                                 "Content-Type": "application/json",
                                 Accept: "application/json",
                                 ...(this.adminToken
@@ -473,7 +475,7 @@ export default class MedusaAdminService {
                 return " **BATCH OPERATION**: Only use this for bulk operations with multiple items. Requires arrays: create[], update[], delete[]. For single operations, use the non-batch version.";
             }
             if (operationId.includes("PostProducts")) {
-                return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title": "Product Name", "options": [{"title": "Size", "values": ["S","M","L"]}]}';
+                return ' **REQUIRED**: title (string), options (array with title and values). Example: {"title": "Product Name", "options": [{"title": "Size","values": ["S","M","L"]}]}';
             }
             if (operationId.includes("PostCustomers")) {
                 return " **REQUIRED**: email (string). Optional: first_name, last_name, phone. Do not provide metadata as string.";
@@ -485,68 +487,101 @@ export default class MedusaAdminService {
         return "";
     }
 
+    // /**
+    //  * Custom tool: getMonthlyOrderReport
+    //  * - If month provided → single month count.
+    //  * - Else → fetch the whole YEAR once, then group client-side by month.
+    //  * - All comparisons use UTC.
+    //  */
+    // private defineReportTools(): Array<ReturnType<typeof defineTool>> {
+    //     const getMonthlyOrderReport = defineTool((z) => ({
+    //         name: "getMonthlyOrderReport",
+    //         description:
+    //             "Returns order counts grouped by month for a given year. Optionally pass a month (1-12) to get only that month's count. Uses created_at timestamps (UTC).",
+    //         inputSchema: {
+    //             year: z.number().int().min(2000).max(9999),
+    //             month: z.number().int().min(1).max(12).optional(),
+    //         },
+    //         handler: async (input: Record<string, unknown>): Promise<unknown> => {
+    //             const schema = z.object({
+    //                 year: z.number().int().min(2000).max(9999),
+    //                 month: z.number().int().min(1).max(12).optional(),
+    //             });
+    //             const parsed = schema.safeParse(input);
+    //             if (!parsed.success) {
+    //                 throw new Error(`Invalid input: ${parsed.error.message}`);
+    //             }
+    //             const { year, month } = parsed.data;
+
+    //             if (typeof month === "number") {
+    //                 const { fromIso, toIso } = this.monthRangeUtc(year, month);
+    //                 const count = await this.countOrdersInRange(fromIso, toIso);
+    //                 return {
+    //                     scope: "month",
+    //                     year,
+    //                     month,
+    //                     from: fromIso,
+    //                     to: toIso,
+    //                     count,
+    //                 };
+    //             }
+
+    //             // Fetch the whole year's orders ONCE, then group by month client-side.
+    //             const { fromIso: yearFrom, toIso: yearTo } = this.yearRangeUtc(year);
+    //             const orders = await this.fetchOrdersInRange(yearFrom, yearTo);
+
+    //             const counts = new Array(12).fill(0);
+    //             for (const o of orders) {
+    //                 if (!o?.created_at) continue;
+    //                 const d = new Date(o.created_at);
+    //                 const m = d.getUTCMonth(); // 0..11
+    //                 counts[m] += 1;
+    //             }
+
+    //             const monthly = counts.map((n, i) => {
+    //                 const { fromIso, toIso } = this.monthRangeUtc(year, i + 1);
+    //                 return { month: i + 1, from: fromIso, to: toIso, count: n };
+    //             });
+
+    //             const total = counts.reduce((a, b) => a + b, 0);
+    //             return { scope: "year", year, total, monthly };
+    //         },
+    //     }));
+
+    //     return [getMonthlyOrderReport];
+    // }
+
     /**
-     * Custom tool: getMonthlyOrderReport
-     * - If month provided → single month count.
-     * - Else → fetch the whole YEAR once, then group client-side by month.
-     * - All comparisons use UTC.
+     * Custom analytics tools (general & composable).
+     * Here we add: orders_count — counts non-canceled orders in [start,end) UTC.
      */
-    private defineReportTools(): Array<ReturnType<typeof defineTool>> {
-        const getMonthlyOrderReport = defineTool((z) => ({
-            name: "getMonthlyOrderReport",
+    private defineAnalyticsTools(): Array<ReturnType<typeof defineTool>> {
+        const orders_count = defineTool((z) => ({
+            name: "orders_count",
             description:
-                "Returns order counts grouped by month for a given year. Optionally pass a month (1-12) to get only that month's count. Uses created_at timestamps (UTC).",
+                "Count non-canceled orders in a UTC date range [start, end). Returns { count }.",
             inputSchema: {
-                year: z.number().int().min(2000).max(9999),
-                month: z.number().int().min(1).max(12).optional(),
+                start: z.string().datetime(), // inclusive
+                end: z.string().datetime(),   // exclusive
+                // status left out on purpose to keep tool simple & deterministic.
             },
             handler: async (input: Record<string, unknown>): Promise<unknown> => {
                 const schema = z.object({
-                    year: z.number().int().min(2000).max(9999),
-                    month: z.number().int().min(1).max(12).optional(),
+                    start: z.string().datetime(),
+                    end: z.string().datetime(),
                 });
                 const parsed = schema.safeParse(input);
                 if (!parsed.success) {
                     throw new Error(`Invalid input: ${parsed.error.message}`);
                 }
-                const { year, month } = parsed.data;
+                const { start, end } = parsed.data;
 
-                if (typeof month === "number") {
-                    const { fromIso, toIso } = this.monthRangeUtc(year, month);
-                    const count = await this.countOrdersInRange(fromIso, toIso);
-                    return {
-                        scope: "month",
-                        year,
-                        month,
-                        from: fromIso,
-                        to: toIso,
-                        count,
-                    };
-                }
-
-                // Fetch the whole year's orders ONCE, then group by month client-side.
-                const { fromIso: yearFrom, toIso: yearTo } = this.yearRangeUtc(year);
-                const orders = await this.fetchOrdersInRange(yearFrom, yearTo);
-
-                const counts = new Array(12).fill(0);
-                for (const o of orders) {
-                    if (!o?.created_at) continue;
-                    const d = new Date(o.created_at);
-                    const m = d.getUTCMonth(); // 0..11
-                    counts[m] += 1;
-                }
-
-                const monthly = counts.map((n, i) => {
-                    const { fromIso, toIso } = this.monthRangeUtc(year, i + 1);
-                    return { month: i + 1, from: fromIso, to: toIso, count: n };
-                });
-
-                const total = counts.reduce((a, b) => a + b, 0);
-                return { scope: "year", year, total, monthly };
+                const count = await this.countOrdersInRange(start, end);
+                return { start, end, count };
             },
         }));
 
-        return [getMonthlyOrderReport];
+        return [orders_count];
     }
 
     defineTools(admin = adminJson): Array<ReturnType<typeof defineTool>> {
@@ -556,7 +591,8 @@ export default class MedusaAdminService {
             const ts = this.wrapPath(path, refFunction);
             tools.push(...ts);
         });
-        tools.push(...this.defineReportTools());
+        // tools.push(...this.defineReportTools());
+        tools.push(...this.defineAnalyticsTools()); // <-- NEW analytics tool(s)
         return tools;
     }
 }
