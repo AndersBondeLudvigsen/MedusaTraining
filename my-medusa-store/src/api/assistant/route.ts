@@ -2,6 +2,72 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
 import { getMcp } from "../../lib/mcp/manager";
 import { metricsStore, withToolLogging } from "../../lib/metrics/store";
 
+// Category-specific prompts
+function getCategoryPrompt(category: string, wantsChart?: boolean): string {
+  const chartGuidance = wantsChart
+    ? "\nWhen providing data for charts, focus on quantitative metrics that can be visualized effectively."
+    : "";
+
+  const prompts: Record<string, string> = {
+    products: `You are a Product Management specialist for this e-commerce platform. You excel at:
+- Managing product catalogs, variants, and inventory
+- Organizing products into collections and categories
+- Handling product pricing and stock levels
+- Managing product images, descriptions, and attributes
+- Tracking inventory across different locations
+Focus on product-related tasks and provide detailed insights about merchandise management.
+If you need data from other categories (customers, orders, promotions) to complete a task, use the appropriate tools to gather that information.${
+      chartGuidance
+        ? "\nFor charts: Focus on inventory levels, product performance, pricing trends, or category distributions."
+        : ""
+    }`,
+
+    customers: `You are a Customer Relationship specialist for this e-commerce platform. You excel at:
+- Managing customer profiles and contact information
+- Organizing customers into groups and segments
+- Handling customer addresses and preferences
+- Analyzing customer behavior and purchase history
+- Providing personalized customer service insights
+Focus on customer-related tasks and building strong customer relationships.
+If you need data from other categories (products, orders, promotions) to complete a task, use the appropriate tools to gather that information.${
+      chartGuidance
+        ? "\nFor charts: Focus on customer growth, segmentation data, geographic distribution, or behavior patterns."
+        : ""
+    }`,
+
+    orders: `You are an Order Management specialist for this e-commerce platform. You excel at:
+- Processing and tracking orders through their lifecycle
+- Managing fulfillments, shipments, and deliveries
+- Handling returns, exchanges, and refunds
+- Resolving order issues and claims
+- Optimizing order processing workflows
+Focus on order-related tasks and ensuring smooth order operations.
+If you need data from other categories (products, customers, promotions) to complete a task, use the appropriate tools to gather that information.${
+      chartGuidance
+        ? "\nFor charts: Focus on order volumes, revenue trends, fulfillment metrics, or time-based order patterns."
+        : ""
+    }`,
+
+    promotions: `You are a Marketing and Promotions specialist for this e-commerce platform. You excel at:
+- Creating and managing promotional campaigns
+- Setting up discounts, coupons, and special offers
+- Analyzing campaign performance and ROI
+- Targeting specific customer segments
+- Optimizing pricing strategies and promotional timing
+Focus on promotion-related tasks and driving sales through effective marketing.
+If you need data from other categories (products, customers, orders) to complete a task, use the appropriate tools to gather that information.${
+      chartGuidance
+        ? "\nFor charts: Focus on campaign performance, discount usage, conversion rates, or promotional impact over time."
+        : ""
+    }`,
+  };
+
+  return (
+    prompts[category] ||
+    `You are a general e-commerce platform assistant.${chartGuidance}`
+  );
+}
+
 /* ---------------- Types ---------------- */
 
 type McpTool = {
@@ -304,7 +370,8 @@ async function planNextStepWithGemini(
   history: { tool_name: string; tool_args: any; tool_result: any }[],
   modelName = "gemini-2.5-flash",
   wantsChart: boolean = false,
-  category?: string
+  category?: string,
+  chartType: ChartType = "bar"
 ): Promise<{
   action: "call_tool" | "final_answer";
   tool_name?: string;
@@ -322,36 +389,48 @@ async function planNextStepWithGemini(
   }));
 
   const chartDirective = wantsChart
-    ? "The UI will render charts. Do NOT produce chart JSON—call tools to fetch accurate data and summarize."
+    ? `The user wants a chart visualization. When providing your final answer:
+- Call tools that return arrays of data with numeric values (e.g., order counts, revenue amounts, product quantities)
+- Prefer data grouped by time periods (dates, months, years) or categories for meaningful charts
+- The system will automatically convert your data response into a ${chartType} chart
+- Focus on retrieving data that can be visualized effectively in chart format`
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-  // Category-specific instructions
-  const getCategoryInstruction = (category?: string): string => {
-    const baseInstruction = `You are a reasoning agent for an e-commerce backend. Decide the next step based on the user's goal and the tool-call history.\n` +
-      `Actions: 'call_tool' or 'final_answer'.\n\n` +
-      `1) If you need information or must perform an action, choose 'call_tool'.\n` +
-      `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n`;
+  console.log(`🎯 PROMPT CONSTRUCTION:`);
+  console.log(`   Category: ${category || "none (general)"}`);
+  console.log(`   Wants Chart: ${wantsChart}`);
+  console.log(`   Chart Type: ${wantsChart ? chartType : "n/a"}`);
 
-    const categoryContext = {
-      customers: `CUSTOMER FOCUS: You specialize in customer analytics and management. Prioritize customer-related data, demographics, behavior patterns, segmentation, and customer lifecycle metrics. When analyzing data, focus on customer acquisition, retention, lifetime value, and satisfaction metrics.`,
-      orders: `ORDER FOCUS: You specialize in order analytics and management. Prioritize order-related data, sales performance, order fulfillment, processing times, and revenue metrics. When analyzing data, focus on order volumes, trends, conversion rates, and operational efficiency.`,
-      products: `PRODUCT FOCUS: You specialize in product analytics and inventory management. Prioritize product-related data, inventory levels, product performance, categories, and merchandising metrics. When analyzing data, focus on best sellers, stock management, product profitability, and catalog optimization.`,
-      promotions: `PROMOTION FOCUS: You specialize in promotion and discount analytics. Prioritize promotion-related data, discount effectiveness, campaign performance, and marketing metrics. When analyzing data, focus on promotion ROI, usage rates, customer response, and campaign optimization.`
-    };
+  // Get category-specific prompt or use default
+  const rolePrompt = category
+    ? getCategoryPrompt(category, wantsChart)
+    : `You are a general e-commerce platform assistant for managing backend operations.${
+        wantsChart
+          ? "\nWhen providing data for charts, focus on quantitative metrics that can be visualized effectively."
+          : ""
+      }`;
 
-    const categorySpecific = category && categoryContext[category as keyof typeof categoryContext] 
-      ? `\n\n${categoryContext[category as keyof typeof categoryContext]}\n\n`
-      : '\n\n';
+  console.log(`📝 ROLE PROMPT:`);
+  console.log(`   ${rolePrompt.substring(0, 100)}...`);
 
-    return baseInstruction + categorySpecific;
-  };
+  console.log(`📋 CHART DIRECTIVE:`);
+  console.log(`   ${chartDirective.substring(0, 100)}...`);
 
-  const instruction = getCategoryInstruction(category) +
+  const instruction =
+    `${rolePrompt}\n\n` +
+    `Decide the next step based on the user's goal and the tool-call history.\n` +
+    `Actions: 'call_tool' or 'final_answer'.\n\n` +
+    `1) If you need information or must perform an action, choose 'call_tool'.\n` +
+    `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n` +
     `${chartDirective}\n\n` +
     `Always retrieve real data via the most relevant tool (Admin* list endpoints or custom tools).\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
     `JSON to call a tool: {"action":"call_tool","tool_name":"string","tool_args":object}\n` +
     `JSON for the final answer: {"action":"final_answer","answer":"string"}`;
+
+  console.log(`🤖 FINAL INSTRUCTION LENGTH: ${instruction.length} characters`);
+  console.log(`🔧 AVAILABLE TOOLS: ${tools.length} tools`);
+  console.log(`📚 HISTORY STEPS: ${history.length} previous actions`);
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 
@@ -386,23 +465,44 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       wantsChart?: boolean;
       chartType?: ChartType;
       chartTitle?: string;
-      category?: string;
+      category?: string; // New category filter
     };
 
     const prompt = body.prompt?.trim();
-    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+    if (!prompt) {
+      return res.status(400).json({ error: "Missing prompt" });
+    }
 
     const wantsChart = Boolean(body.wantsChart);
     const chartType: ChartType = body.chartType === "line" ? "line" : "bar";
-    const chartTitle = typeof body.chartTitle === "string" ? body.chartTitle : undefined;
-    const category = typeof body.category === "string" ? body.category : undefined;
+    const chartTitle =
+      typeof body.chartTitle === "string" ? body.chartTitle : undefined;
+    const category = typeof body.category === "string" ? body.category : null;
+
+    console.log(`\n🚀 ASSISTANT REQUEST RECEIVED:`);
+    console.log(
+      `   Prompt: "${prompt.substring(0, 50)}${
+        prompt.length > 50 ? "..." : ""
+      }"`
+    );
+    console.log(`   Category: ${category || "none"}`);
+    console.log(`   Wants Chart: ${wantsChart}`);
+    console.log(`   Chart Type: ${chartType}`);
+    console.log(`   Chart Title: ${chartTitle || "none"}`);
 
     const mcp = await getMcp();
+
+    // Get all available tools
     const tools = await mcp.listTools();
-    const availableTools: McpTool[] = (tools.tools ?? []) as any;
+    let availableTools: McpTool[] = (tools.tools ?? []) as any;
+
+    console.log(`\n🔧 TOOL AVAILABILITY:`);
+    console.log(`   Total tools available: ${availableTools.length}`);
+    console.log(`   Category guidance: ${category || "general"} (all tools accessible)`);
+    // Note: Category only affects the AI prompt, not tool filtering
 
     const history: HistoryEntry[] = [];
-    const maxSteps = 11;
+    const maxSteps = 15;
 
     // 🔸 START assistant turn
     const turnId = metricsStore.startAssistantTurn({ user: prompt });
@@ -416,7 +516,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         history,
         "gemini-2.5-flash",
         wantsChart,
-        category
+        category || undefined,
+        chartType
       );
 
       if (plan.action === "final_answer") {
@@ -434,7 +535,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           }
         }
 
-        const latestPayload = extractToolJsonPayload(history[history.length - 1]?.tool_result);
+        const latestPayload = extractToolJsonPayload(
+          history[history.length - 1]?.tool_result
+        );
         const chart = wantsChart
           ? buildChartFromLatestTool(history, chartType, chartTitle) ?? null
           : null;
@@ -458,11 +561,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           console.log(`   Normalized args: ${JSON.stringify(normalizedArgs)}`);
         }
 
-        const result = await withToolLogging(plan.tool_name, normalizedArgs, async () => {
-          return mcp.callTool(plan.tool_name!, normalizedArgs);
-        });
+        const result = await withToolLogging(
+          plan.tool_name,
+          normalizedArgs,
+          async () => {
+            return mcp.callTool(plan.tool_name!, normalizedArgs);
+          }
+        );
 
-        console.log(`   Tool Result: ${JSON.stringify(result).substring(0, 200)}...`);
+        console.log(
+          `   Tool Result: ${JSON.stringify(result).substring(0, 200)}...`
+        );
 
         const payload = extractToolJsonPayload(result);
         const truth = collectGroundTruthNumbers(payload);
@@ -483,7 +592,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     // If we got here, we exceeded max steps
     metricsStore.endAssistantTurn(turnId, "[aborted: max steps exceeded]");
     return res.status(500).json({
-      error: "The agent could not complete the request within the maximum number of steps.",
+      error:
+        "The agent could not complete the request within the maximum number of steps.",
       history,
     });
   } catch (e: any) {
