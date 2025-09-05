@@ -1,16 +1,16 @@
 import type { ExecArgs } from "@medusajs/framework/types";
 import { Client as PgClient } from "pg";
-import { createOrderWorkflow, createCustomersWorkflow } from "@medusajs/core-flows";
+import {
+  createOrderWorkflow,
+  createCustomersWorkflow,
+} from "@medusajs/core-flows";
 import {
   getOrderDetailWorkflow,
   createOrderFulfillmentWorkflow,
   createOrUpdateOrderPaymentCollectionWorkflow,
   markPaymentCollectionAsPaid,
 } from "@medusajs/core-flows";
-import { 
-  Modules,
-  ContainerRegistrationKeys
-} from "@medusajs/framework/utils";
+import { Modules, ContainerRegistrationKeys } from "@medusajs/framework/utils";
 import {
   createStockLocationsWorkflow,
   createInventoryLevelsWorkflow,
@@ -19,19 +19,11 @@ import {
   linkSalesChannelsToStockLocationWorkflow,
 } from "@medusajs/medusa/core-flows";
 
-export default async function seedDummyOrders({
-  container,
-}: ExecArgs) {
-  const { faker } = await import('@faker-js/faker');
-  const logger = container.resolve(
-    ContainerRegistrationKeys.LOGGER
-  );
-  const query = container.resolve(
-    ContainerRegistrationKeys.QUERY
-  );
-  const link = container.resolve(
-    ContainerRegistrationKeys.LINK
-  );
+export default async function seedDummyOrders({ container }: ExecArgs) {
+  const { faker } = await import("@faker-js/faker");
+  const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
+  const query = container.resolve(ContainerRegistrationKeys.QUERY);
+  const link = container.resolve(ContainerRegistrationKeys.LINK);
 
   // Check for existing customers
   let { data: customers } = (await query.graph({
@@ -87,15 +79,15 @@ export default async function seedDummyOrders({
     ],
   })) as {
     data: Array<{
-      id: string
-      title: string
+      id: string;
+      title: string;
       variants?: Array<{
-        id: string
-        prices?: Array<{ amount: number; currency_code: string }>
-      }>
-    }>
+        id: string;
+        prices?: Array<{ amount: number; currency_code: string }>;
+      }>;
+    }>;
   };
-  
+
   let { data: shipping_options } = (await query.graph({
     entity: "shipping_option",
     fields: [
@@ -109,30 +101,31 @@ export default async function seedDummyOrders({
       "service_zone_id",
     ],
   })) as { data: Array<{ id: string; name: string }> };
-  
+
   if (!products.length) {
-    logger.warn("No products found. Please seed products before seeding orders.");
+    logger.warn(
+      "No products found. Please seed products before seeding orders."
+    );
     return;
   }
 
-  const salesChannelModuleService = container.resolve(
-    Modules.SALES_CHANNEL
-  );
+  const salesChannelModuleService = container.resolve(Modules.SALES_CHANNEL);
 
-  const defaultSalesChannel = await salesChannelModuleService
-    .listSalesChannels({
+  const defaultSalesChannel = await salesChannelModuleService.listSalesChannels(
+    {
       name: "Default Sales Channel",
-    });
+    }
+  );
 
   // Ensure stock location exists and is linked to the default sales channel; ensure basic shipping option as well
   const fulfillmentModuleService = container.resolve(Modules.FULFILLMENT);
   const storeModuleService = container.resolve(Modules.STORE);
 
   // 1) Ensure at least one stock location
-  let { data: stock_locations } = await query.graph({
+  let { data: stock_locations } = (await query.graph({
     entity: "stock_location",
     fields: ["id", "name"],
-  }) as { data: Array<{ id: string; name: string }> };
+  })) as { data: Array<{ id: string; name: string }> };
 
   if (!stock_locations.length) {
     const { result: locs } = await createStockLocationsWorkflow(container).run({
@@ -144,84 +137,95 @@ export default async function seedDummyOrders({
           },
         ],
       },
-    })
-    stock_locations = locs
+    });
+    stock_locations = locs;
   }
-  const stockLocationId = stock_locations[0].id
+  const stockLocationId = stock_locations[0].id;
 
   // 2) Link default sales channel to stock location (idempotent)
   if (defaultSalesChannel?.[0]?.id) {
     await linkSalesChannelsToStockLocationWorkflow(container).run({
       input: { id: stockLocationId, add: [defaultSalesChannel[0].id] },
-    })
+    });
   }
 
   // 3) Ensure inventory levels exist for all inventory items at this location
-  const { data: inventoryItems } = await query.graph({
+  const { data: inventoryItems } = (await query.graph({
     entity: "inventory_item",
     fields: ["id"],
-  }) as { data: Array<{ id: string }> }
+  })) as { data: Array<{ id: string }> };
 
   // Check existing levels to avoid duplicates
-  const { data: existingLevels } = await query.graph({
+  const { data: existingLevels } = (await query.graph({
     entity: "inventory_level",
     fields: ["inventory_item_id"],
     filters: { location_id: stockLocationId },
-  }) as { data: Array<{ inventory_item_id: string }> }
+  })) as { data: Array<{ inventory_item_id: string }> };
 
-  const existingSet = new Set(existingLevels.map((l) => l.inventory_item_id))
+  const existingSet = new Set(existingLevels.map((l) => l.inventory_item_id));
   const levelsToCreate = inventoryItems
     .filter((ii) => !existingSet.has(ii.id))
     .map((ii) => ({
       location_id: stockLocationId,
       stocked_quantity: 1_000_000,
       inventory_item_id: ii.id,
-    }))
+    }));
 
   if (levelsToCreate.length) {
     await createInventoryLevelsWorkflow(container).run({
       input: { inventory_levels: levelsToCreate },
-    })
+    });
   }
 
   // 4) Ensure a shipping option exists; if none, create minimal profile + option
   if (!shipping_options.length) {
     // Ensure default profile exists
-    const profiles = await fulfillmentModuleService.listShippingProfiles({ type: "default" })
-    let shippingProfile = profiles[0]
+    const profiles = await fulfillmentModuleService.listShippingProfiles({
+      type: "default",
+    });
+    let shippingProfile = profiles[0];
     if (!shippingProfile) {
-      const { result: profs } = await createShippingProfilesWorkflow(container).run({
-        input: { data: [{ name: "Default Shipping Profile", type: "default" }] },
-      })
-      shippingProfile = profs[0]
+      const { result: profs } = await createShippingProfilesWorkflow(
+        container
+      ).run({
+        input: {
+          data: [{ name: "Default Shipping Profile", type: "default" }],
+        },
+      });
+      shippingProfile = profs[0];
     }
 
     // Create a simple service zone via fulfillment set
-    const countries = ["dk"]
-    const fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
-      name: "Default delivery",
-      type: "shipping",
-      service_zones: [
-        {
-          name: "Default Zone",
-          geo_zones: countries.map((c) => ({ country_code: c, type: "country" as const })),
-        },
-      ],
-    })
+    const countries = ["dk"];
+    const fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets(
+      {
+        name: "Default delivery",
+        type: "shipping",
+        service_zones: [
+          {
+            name: "Default Zone",
+            geo_zones: countries.map((c) => ({
+              country_code: c,
+              type: "country" as const,
+            })),
+          },
+        ],
+      }
+    );
 
     // Link stock location to manual provider and to the new fulfillment set (ignore duplicates)
     try {
       await link.create({
         [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
         [Modules.FULFILLMENT]: { fulfillment_provider_id: "manual_manual" },
-      })
+      });
     } catch {}
 
     try {
       await link.create({
         [Modules.STOCK_LOCATION]: { stock_location_id: stockLocationId },
         [Modules.FULFILLMENT]: { fulfillment_set_id: fulfillmentSet.id },
-      })
+      });
     } catch {}
 
     await createShippingOptionsWorkflow(container).run({
@@ -232,7 +236,11 @@ export default async function seedDummyOrders({
           provider_id: "manual_manual",
           service_zone_id: fulfillmentSet.service_zones[0].id,
           shipping_profile_id: shippingProfile.id,
-          type: { label: "Standard", description: "Ship in 2-3 days.", code: "standard" },
+          type: {
+            label: "Standard",
+            description: "Ship in 2-3 days.",
+            code: "standard",
+          },
           prices: [
             { currency_code: "usd", amount: 10 },
             { currency_code: "eur", amount: 10 },
@@ -243,14 +251,14 @@ export default async function seedDummyOrders({
           ],
         },
       ],
-    })
+    });
 
     // re-fetch
-    const soRe = await query.graph({
+    const soRe = (await query.graph({
       entity: "shipping_option",
       fields: ["id", "name"],
-    }) as { data: Array<{ id: string; name: string }> }
-    shipping_options = soRe.data
+    })) as { data: Array<{ id: string; name: string }> };
+    shipping_options = soRe.data;
   }
 
   // Generate 5 orders
@@ -264,18 +272,27 @@ export default async function seedDummyOrders({
     const itemsCount = Math.max(1, Math.floor(Math.random() * 3) + 0);
     const pickedIndexes = new Set<number>();
     const pickedItems: any[] = [];
-    while (pickedItems.length < itemsCount && pickedIndexes.size < products.length) {
+    while (
+      pickedItems.length < itemsCount &&
+      pickedIndexes.size < products.length
+    ) {
       const idx = Math.floor(Math.random() * products.length);
       if (pickedIndexes.has(idx)) continue;
       pickedIndexes.add(idx);
       const product = products[idx];
-      const variant = (product.variants && product.variants.length)
-        ? product.variants[Math.floor(Math.random() * product.variants.length)]
-        : null;
+      const variant =
+        product.variants && product.variants.length
+          ? product.variants[
+              Math.floor(Math.random() * product.variants.length)
+            ]
+          : null;
       if (!variant) continue;
       // Compute unit price from variant's original prices matching region currency
-      const priceMatch = (variant as any).prices?.find((p: any) => p.currency_code === region.currency_code);
-      const unit_price = priceMatch?.amount ?? (variant as any).prices?.[0]?.amount ?? 2500;
+      const priceMatch = (variant as any).prices?.find(
+        (p: any) => p.currency_code === region.currency_code
+      );
+      const unit_price =
+        priceMatch?.amount ?? (variant as any).prices?.[0]?.amount ?? 2500;
       pickedItems.push({
         title: product.title,
         unit_price,
@@ -283,10 +300,13 @@ export default async function seedDummyOrders({
         quantity: Math.floor(Math.random() * 3) + 1,
       } as any);
     }
-    const shipping_option = shipping_options[Math.floor(Math.random() * shipping_options.length)];
+    const shipping_option =
+      shipping_options[Math.floor(Math.random() * shipping_options.length)];
 
     if (!customer.email) {
-      logger.warn(`Customer with ID ${customer.id} has no email, skipping order creation.`);
+      logger.warn(
+        `Customer with ID ${customer.id} has no email, skipping order creation.`
+      );
       continue;
     }
 
@@ -301,10 +321,11 @@ export default async function seedDummyOrders({
       city: faker.location.city(),
       country_code:
         (Array.isArray((region as any).countries) &&
-          (region as any).countries[0]?.iso_2?.toLowerCase()) || "de",
+          (region as any).countries[0]?.iso_2?.toLowerCase()) ||
+        "de",
       province: faker.location.state(),
       postal_code: faker.location.zipCode(),
-      metadata: {}
+      metadata: {},
     };
 
     // Create order data
@@ -316,8 +337,8 @@ export default async function seedDummyOrders({
       sales_channel_id: defaultSalesChannel[0].id,
       shipping_address: address,
       billing_address: address,
-  // Provide items using original prices pulled from variant prices
-  items: pickedItems,
+      // Provide items using original prices pulled from variant prices
+      items: pickedItems,
       shipping_methods: [
         {
           option_id: shipping_option.id,
@@ -325,9 +346,9 @@ export default async function seedDummyOrders({
           amount: 10,
           // data can be set if provider requires it
           data: {},
-        }
+        },
       ],
-      metadata: {}
+      metadata: {},
     };
 
     try {
@@ -351,9 +372,9 @@ export default async function seedDummyOrders({
           await pg.connect();
           try {
             const candidates = [
-              '"order"',            // common for Medusa v2
-              'orders',               // fallback
-              'order_order'           // module-style naming fallback
+              '"order"', // common for Medusa v2
+              "orders", // fallback
+              "order_order", // module-style naming fallback
             ];
             let updated = 0;
             for (const table of candidates) {
@@ -365,21 +386,27 @@ export default async function seedDummyOrders({
               if (res.rowCount) break;
             }
             if (updated) {
-              logger.info(`Backdated order ${order.id} created_at -> ${backdated.toISOString()} (rows: ${updated})`);
+              logger.info(
+                `Backdated order ${
+                  order.id
+                } created_at -> ${backdated.toISOString()} (rows: ${updated})`
+              );
             } else {
-              logger.warn(`Could not locate order table to backdate ${order.id}. Tried common table names.`);
+              logger.warn(
+                `Could not locate order table to backdate ${order.id}. Tried common table names.`
+              );
             }
           } finally {
             await pg.end().catch(() => {});
           }
         } else {
-          logger.warn('DATABASE_URL is not Postgres; skipping hard backdate.');
+          logger.warn("DATABASE_URL is not Postgres; skipping hard backdate.");
         }
       } catch (e: any) {
-        logger.warn(`Failed to backdate created_at for ${order.id}: ${e?.message ?? e}`);
+        logger.warn(
+          `Failed to backdate created_at for ${order.id}: ${e?.message ?? e}`
+        );
       }
-
-      
 
       // Fetch order detail to get items and payment collections
       const { result: detail } = await getOrderDetailWorkflow(container).run({
