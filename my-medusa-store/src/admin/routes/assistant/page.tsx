@@ -11,6 +11,9 @@ const AssistantPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Category selection
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+
   // NEW: chart controls
   const [wantsChart, setWantsChart] = useState<boolean>(false);
   const [chartType, setChartType] = useState<"bar" | "line">("bar");
@@ -23,6 +26,7 @@ const AssistantPage = () => {
   const STORAGE_KEY_WANTS_CHART = "assistant:wantsChart";
   const STORAGE_KEY_CHART_TYPE = "assistant:chartType";
   const STORAGE_KEY_CHART_TITLE = "assistant:chartTitle";
+  const STORAGE_KEY_CATEGORY = "assistant:category";
 
   useEffect(() => {
     try {
@@ -48,6 +52,9 @@ const AssistantPage = () => {
 
       const savedTitle = localStorage.getItem(STORAGE_KEY_CHART_TITLE);
       if (savedTitle != null) setChartTitle(savedTitle);
+
+      const savedCategory = localStorage.getItem(STORAGE_KEY_CATEGORY);
+      if (savedCategory) setSelectedCategory(savedCategory);
     } catch {}
   }, []);
 
@@ -99,6 +106,12 @@ const AssistantPage = () => {
       localStorage.setItem(STORAGE_KEY_CHART_TITLE, chartTitle);
     } catch {}
   }, [chartTitle]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CATEGORY, selectedCategory);
+    } catch {}
+  }, [selectedCategory]);
 
   const canSubmit = useMemo(
     () => prompt.trim().length > 0 && !loading,
@@ -172,6 +185,25 @@ const AssistantPage = () => {
         <Text size="small">
           Ask the assistant for help with merchandising, pricing, and more.
         </Text>
+
+        {/* Category Selection */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="category-select" className="text-ui-fg-subtle font-medium">
+            Category:
+          </label>
+          <select
+            id="category-select"
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="rounded-md border border-ui-border-base bg-ui-bg-base text-ui-fg-base px-3 py-2 min-w-[150px]"
+          >
+            <option value="">Select a category</option>
+            <option value="customers">Customers</option>
+            <option value="orders">Orders</option>
+            <option value="products">Products</option>
+            <option value="promotions">Promotions</option>
+          </select>
+        </div>
 
         {/* Prompt input */}
         <textarea
