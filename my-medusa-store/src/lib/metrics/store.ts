@@ -20,11 +20,14 @@ export type Anomaly = {
   details?: any;
 };
 
+
+
 const MAX_EVENTS = 1000;
 const MAX_ANOMALIES = 200;
 const SPIKE_WINDOW_MIN = 10; // minutes for baseline
 const SPIKE_FACTOR = 3; // 3x baseline
 const SPIKE_MIN_ABS = 10; // at least 10 calls in the burst minute
+
 
 function stripJsonFences(text: string): string {
   const fence = /```(?:json)?\n([\s\S]*?)\n```/i;
@@ -45,12 +48,10 @@ function safeParseJSON(maybeJson: unknown): any | undefined {
   }
 }
 
-// Extract JSON payload from MCP-like result: { content:[{type:"text", text:"..."}], isError? }
 function extractToolJsonPayload(toolResult: any): any | undefined {
+  if (toolResult && typeof toolResult === "object") return toolResult;
   try {
-    const textItem = toolResult?.content?.find?.(
-      (c: any) => c?.type === "text"
-    );
+    const textItem = toolResult?.content?.find?.((c: any) => c?.type === "text");
     if (textItem?.text) return safeParseJSON(textItem.text);
   } catch {}
   return undefined;
@@ -114,23 +115,24 @@ class MetricsStore {
     return id;
   }
 
-  endToolCall(id: string, result: any, ok: boolean, errorMessage?: string) {
-    const idx = this.events.findIndex((e) => e.id === id);
-    const now = Date.now();
-    if (idx === -1) return;
-    const evt = this.events[idx];
-    evt.success = ok;
-    evt.errorMessage = ok ? undefined : errorMessage ?? "";
-    evt.durationMs = now - evt.timestamp;
-    evt.result = this.sanitize(result, 10000); // keep larger for results
-    // parse payload for anomaly detection
-    try {
-      evt.parsedPayload = extractToolJsonPayload(result);
-    } catch {}
+endToolCall(id: string, rawResult: any, ok: boolean, errorMessage?: string) {
+  const idx = this.events.findIndex((e) => e.id === id);
+  if (idx === -1) return;
+  const evt = this.events[idx];
 
-    // anomaly checks
-    this.checkAnomaliesAfterEvent(evt);
-  }
+  // Extract BEFORE sanitize
+  try {
+    evt.parsedPayload = extractToolJsonPayload(rawResult) ?? 
+                        (typeof rawResult === "object" ? rawResult : undefined);
+  } catch {}
+
+  evt.success = ok;
+  evt.errorMessage = ok ? undefined : (errorMessage ?? "");
+  evt.durationMs = Date.now() - evt.timestamp;
+  evt.result = this.sanitize(rawResult, 10_000);
+
+  this.checkAnomaliesAfterEvent(evt);
+}
 
   getSummary() {
     const now = Date.now();
@@ -274,27 +276,28 @@ class MetricsStore {
     } catch {}
   }
 
-  private sanitize(obj: any, maxLen = 3000) {
-    try {
-      const json = JSON.stringify(obj, (k, v) => {
-        if (typeof v === "string" && v.length > 1000)
-          return v.slice(0, 1000) + "…";
-        if (Array.isArray(v) && v.length > 200)
-          return v.slice(0, 200).concat(["…truncated…"]);
-        return v;
-      });
-      if (json.length > maxLen) return json.slice(0, maxLen) + "…";
-      return JSON.parse(json);
-    } catch {
-      const s = String(obj ?? "");
-      return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
-    }
+
+
+private sanitize(obj: any, maxLen = 3000) {
+  const redact = (o: any) => JSON.stringify(o, (k, v) => {
+    if (typeof v === "string" && v.length > 1000) return v.slice(0, 1000) + "…";
+    if (Array.isArray(v) && v.length > 200) return v.slice(0, 200).concat(["…truncated…"]);
+    return v;
+  });
+
+  try {
+    const json = redact(obj);
+    if (json.length <= maxLen) return JSON.parse(json);
+    return { __truncated__: true, preview: json.slice(0, maxLen) + "…" };
+  } catch {
+    const s = String(obj ?? "");
+    return s.length <= maxLen ? { preview: s } : { __truncated__: true, preview: s.slice(0, maxLen) + "…" };
   }
+}
 }
 
 export const metricsStore = new MetricsStore();
 
-// Convenience logger
 export function withToolLogging<T>(
   tool: string,
   args: any,
