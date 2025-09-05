@@ -20,14 +20,11 @@ export type Anomaly = {
   details?: any;
 };
 
-
-
 const MAX_EVENTS = 1000;
 const MAX_ANOMALIES = 200;
 const SPIKE_WINDOW_MIN = 10; // minutes for baseline
 const SPIKE_FACTOR = 3; // 3x baseline
 const SPIKE_MIN_ABS = 10; // at least 10 calls in the burst minute
-
 
 function stripJsonFences(text: string): string {
   const fence = /```(?:json)?\n([\s\S]*?)\n```/i;
@@ -98,6 +95,112 @@ function detectNegativeInventory(payload: any) {
   return findings;
 }
 
+/* --------------------------- Secret redaction --------------------------- */
+
+type Redaction = { pattern: RegExp; replace?: string | ((m: string) => string) };
+
+// Conservative patterns; extend with provider-specific ones if needed.
+const SECRET_PATTERNS: Redaction[] = [
+  // Bearer tokens / Authorization headers
+  { pattern: /\bBearer\s+[A-Za-z0-9._-]{20,}\b/gi, replace: "Bearer ***REDACTED***" },
+  // JWT (three dot-separated Base64URL segments)
+  { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, replace: "***REDACTED_JWT***" },
+  // OpenAI-like "sk-" keys
+  { pattern: /\bsk-[A-Za-z0-9]{20,}\b/g, replace: "***REDACTED_KEY***" },
+  // Generic key/value tokens in text
+  {
+    pattern: /\b(?:api[-_]?key|access[-_]?key|secret|token|pat|session|authorization)\b\s*[:=]\s*["']?([A-Za-z0-9._-]{20,})/gi,
+    replace: (m) => m.replace(/([A-Za-z0-9._-]{20,})$/g, "***REDACTED***"),
+  },
+  // URL query params that often carry secrets
+  {
+    pattern: /([?&](?:api[_-]?key|key|token|access[_-]?token|auth|signature|sig)=)[^&#\s]+/gi,
+    replace: (m) => m.replace(/=.*/g, "=***REDACTED***"),
+  },
+];
+
+const SENSITIVE_VALUE_KEYS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "api-key",
+  "apikey",
+  "access-key",
+  "accesskey",
+  "secret",
+  "client-secret",
+  "token",
+  "id-token",
+  "refresh-token",
+  "password",
+  "pass",
+  "pwd",
+  "private-key",
+  "privatekey",
+  "x-api-key",
+  "x-auth-token",
+]);
+
+/** Redact secrets inside a free-form string */
+function redactStrings(input: string): string {
+  if (!input) return input;
+  let out = input;
+  for (const { pattern, replace } of SECRET_PATTERNS) {
+    out = out.replace(pattern, (m: string) =>
+      typeof replace === "function" ? replace(m) : (replace ?? "***REDACTED***")
+    );
+  }
+
+  // Generic long base64/hex-ish tokens (last resort). Only if length >= 32 and mixed classes.
+  out = out.replace(/\b[A-Za-z0-9+/_-]{32,}\b/g, (m) => {
+    const hasLetters = /[A-Za-z]/.test(m);
+    const hasDigits = /\d/.test(m);
+    if (hasLetters && hasDigits) return "***REDACTED***";
+    return m;
+  });
+
+  return out;
+}
+
+/** Deep clone+redact an object, handling cycles and preserving arrays/shape */
+function redactObjectDeep<T>(value: T): T {
+  const seen = new WeakMap<object, any>();
+
+  const walk = (val: any): any => {
+    if (val == null) return val;
+    const t = typeof val;
+
+    if (t === "string") return redactStrings(val);
+    if (t !== "object") return val;
+
+    if (seen.has(val)) return seen.get(val);
+
+    if (Array.isArray(val)) {
+      const arr: any[] = new Array(val.length);
+      seen.set(val, arr);
+      for (let i = 0; i < val.length; i++) arr[i] = walk(val[i]);
+      return arr;
+    }
+
+    const out: Record<string, any> = {};
+    seen.set(val, out);
+
+    for (const [k, v] of Object.entries(val)) {
+      const lowerK = k.toLowerCase();
+      if (SENSITIVE_VALUE_KEYS.has(lowerK)) {
+        out[k] = "***REDACTED***";
+        continue;
+      }
+      out[k] = walk(v);
+    }
+
+    return out;
+  };
+
+  return walk(value);
+}
+
+/* ------------------------- End secret redaction ------------------------- */
+
 class MetricsStore {
   private events: ToolCallEvent[] = [];
   private anomalies: Anomaly[] = [];
@@ -115,24 +218,25 @@ class MetricsStore {
     return id;
   }
 
-endToolCall(id: string, rawResult: any, ok: boolean, errorMessage?: string) {
-  const idx = this.events.findIndex((e) => e.id === id);
-  if (idx === -1) return;
-  const evt = this.events[idx];
+  endToolCall(id: string, rawResult: any, ok: boolean, errorMessage?: string) {
+    const idx = this.events.findIndex((e) => e.id === id);
+    if (idx === -1) return;
+    const evt = this.events[idx];
 
-  // Extract BEFORE sanitize
-  try {
-    evt.parsedPayload = extractToolJsonPayload(rawResult) ?? 
-                        (typeof rawResult === "object" ? rawResult : undefined);
-  } catch {}
+    // Extract BEFORE sanitize
+    try {
+      evt.parsedPayload =
+        extractToolJsonPayload(rawResult) ??
+        (typeof rawResult === "object" ? rawResult : undefined);
+    } catch {}
 
-  evt.success = ok;
-  evt.errorMessage = ok ? undefined : (errorMessage ?? "");
-  evt.durationMs = Date.now() - evt.timestamp;
-  evt.result = this.sanitize(rawResult, 10_000);
+    evt.success = ok;
+    evt.errorMessage = ok ? undefined : errorMessage ?? "";
+    evt.durationMs = Date.now() - evt.timestamp;
+    evt.result = this.sanitize(rawResult, 10_000);
 
-  this.checkAnomaliesAfterEvent(evt);
-}
+    this.checkAnomaliesAfterEvent(evt);
+  }
 
   getSummary() {
     const now = Date.now();
@@ -171,7 +275,7 @@ endToolCall(id: string, rawResult: any, ok: boolean, errorMessage?: string) {
         countsThisMinute[e.tool] = (countsThisMinute[e.tool] ?? 0) + 1;
       }
     }
-    for (const [tool, b] of Object.entries(baseline)) {
+    for (const [, b] of Object.entries(baseline)) {
       b.n = SPIKE_WINDOW_MIN;
       b.avg = b.n ? b.sum / b.n : 0;
     }
@@ -276,24 +380,27 @@ endToolCall(id: string, rawResult: any, ok: boolean, errorMessage?: string) {
     } catch {}
   }
 
+  // NEW: deep redaction + length limits with stable object shape
+  private sanitize(obj: any, maxLen = 3000) {
+    try {
+      const redacted = redactObjectDeep(obj);
 
+      const json = JSON.stringify(redacted, (k, v) => {
+        if (typeof v === "string" && v.length > 1000) return v.slice(0, 1000) + "…";
+        if (Array.isArray(v) && v.length > 200) return v.slice(0, 200).concat(["…truncated…"]);
+        return v;
+      });
 
-private sanitize(obj: any, maxLen = 3000) {
-  const redact = (o: any) => JSON.stringify(o, (k, v) => {
-    if (typeof v === "string" && v.length > 1000) return v.slice(0, 1000) + "…";
-    if (Array.isArray(v) && v.length > 200) return v.slice(0, 200).concat(["…truncated…"]);
-    return v;
-  });
+      if (json.length <= maxLen) return JSON.parse(json);
 
-  try {
-    const json = redact(obj);
-    if (json.length <= maxLen) return JSON.parse(json);
-    return { __truncated__: true, preview: json.slice(0, maxLen) + "…" };
-  } catch {
-    const s = String(obj ?? "");
-    return s.length <= maxLen ? { preview: s } : { __truncated__: true, preview: s.slice(0, maxLen) + "…" };
+      return { __truncated__: true, preview: json.slice(0, maxLen) + "…" };
+    } catch {
+      const s = redactStrings(String(obj ?? ""));
+      return s.length <= maxLen
+        ? { preview: s }
+        : { __truncated__: true, preview: s.slice(0, maxLen) + "…" };
+    }
   }
-}
 }
 
 export const metricsStore = new MetricsStore();
@@ -304,7 +411,6 @@ export function withToolLogging<T>(
   fn: () => Promise<T>
 ): Promise<T> {
   const id = metricsStore.startToolCall(tool, args);
-  const start = Date.now();
   return fn()
     .then((res) => {
       metricsStore.endToolCall(id, res, true);
