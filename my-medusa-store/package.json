@@ -25,7 +25,10 @@
     "dev": "medusa develop",
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
     "test:integration:modules": "TEST_TYPE=integration:modules NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
-    "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit"
+    "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit",
+    "test:integration:http:win": "set TEST_TYPE=integration:http && set NODE_OPTIONS=--experimental-vm-modules && set DATABASE_URL=file:./.tmp/test.sqlite && set STORE_CORS=* && set ADMIN_CORS=* && set AUTH_CORS=* && jest --silent=false --runInBand --forceExit",
+    "test:integration:modules:win": "set TEST_TYPE=integration:modules && set NODE_OPTIONS=--experimental-vm-modules && set DATABASE_URL=file:./.tmp/test.sqlite && set STORE_CORS=* && set ADMIN_CORS=* && set AUTH_CORS=* && jest --silent=false --runInBand --forceExit",
+    "test:unit:win": "set TEST_TYPE=unit && set NODE_OPTIONS=--experimental-vm-modules && set DATABASE_URL=file:./.tmp/test.sqlite && set STORE_CORS=* && set ADMIN_CORS=* && set AUTH_CORS=* && jest --silent --runInBand --forceExit"
   },
   "dependencies": {
     "@faker-js/faker": "^10.0.0",

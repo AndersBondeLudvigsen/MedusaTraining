@@ -1,5 +1,6 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
 import { getMcp } from "../../lib/mcp/manager";
+import { metricsStore, withToolLogging } from "../../lib/metrics/store";
 
 /* ---------------- Types ---------------- */
 
@@ -167,19 +168,14 @@ function chartFromSeries(payload: any, chartType: ChartType, title?: string): Ch
   };
 }
 
-/** NEW: generic-from-child-objects.
- * Looks for multiple child objects each with a numeric metric key (from Y_PRIORITIES).
- * Builds a series using a common y-key and a reasonable x label per child.
- */
+/** NEW: generic-from-child-objects. */
 function chartFromChildObjects(payload: any, chartType: ChartType, title?: string): ChartSpec | undefined {
   if (!isObj(payload)) return undefined;
 
-  // Collect child objects directly under payload (ignore arrays/primatives)
   const entries = Object.entries(payload)
     .filter(([_, v]) => isObj(v)) as [string, Record<string, any>][];
   if (entries.length < 2 || entries.length > 24) return undefined;
 
-  // Find a y-key that is numeric in most children
   let chosenY: string | undefined;
   for (const y of Y_PRIORITIES) {
     const hits = entries.filter(([_, obj]) => typeof obj[y] === "number").length;
@@ -190,15 +186,13 @@ function chartFromChildObjects(payload: any, chartType: ChartType, title?: strin
   }
   if (!chosenY) return undefined;
 
-  // Determine x label per child: prefer label/name/month/year; else the child key
-  const rows = entries
-    .map(([key, obj]) => {
-      let label: string | number | undefined =
-        obj.label ?? obj.name ?? (obj.month != null ? monthify("month", obj.month) : undefined) ?? obj.year;
-      if (label == null) label = key; // fallback to entry key
-      const yVal = typeof obj[chosenY!] === "number" ? obj[chosenY!] : Number(obj[chosenY!]) || 0;
-      return { label, [chosenY!]: yVal };
-    });
+  const rows = entries.map(([key, obj]) => {
+    let label: string | number | undefined =
+      obj.label ?? obj.name ?? (obj.month != null ? monthify("month", obj.month) : undefined) ?? obj.year;
+    if (label == null) label = key;
+    const yVal = typeof obj[chosenY!] === "number" ? obj[chosenY!] : Number(obj[chosenY!]) || 0;
+    return { label, [chosenY!]: yVal };
+  });
 
   if (!rows.length) return undefined;
 
@@ -225,11 +219,9 @@ function genericChartFromPayload(payload: any, chartType: ChartType, title?: str
     };
   }
 
-  // Try child-objects pattern (e.g., { a:{year, count}, b:{year, count} })
   const fromChildren = chartFromChildObjects(payload, chartType, title);
   if (fromChildren) return fromChildren;
 
-  // Try any array of objects anywhere
   const arr = findArrayOfObjects(payload);
   if (Array.isArray(arr) && arr.length) {
     const first = arr[0] as Record<string, any>;
@@ -254,11 +246,7 @@ function genericChartFromPayload(payload: any, chartType: ChartType, title?: str
   return undefined;
 }
 
-/** Build chart from the most recent tool payload:
- *  1) honor payload.chart if present
- *  2) use payload.series if present
- *  3) generic fallback (root count / child objects / array of objects)
- */
+/** Build chart from the most recent tool payload. */
 function buildChartFromLatestTool(
   history: HistoryEntry[],
   chartType: ChartType,
@@ -280,6 +268,32 @@ function buildChartFromLatestTool(
     if (generic) return generic;
   }
   return undefined;
+}
+
+/* ---------------- Assistant validation helpers ---------------- */
+
+/** Pull a few commonly-used numeric fields from a payload as ground truth. */
+function collectGroundTruthNumbers(payload: any): Record<string, number> | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+
+  const keys = [
+    "available",
+    "available_quantity",
+    "inventory_quantity",
+    "stocked_quantity",
+    "reserved_quantity",
+    "count",
+    "total",
+    "orders",
+    "items",
+  ];
+
+  const out: Record<string, number> = {};
+  for (const k of keys) {
+    const v = (payload as any)[k];
+    if (typeof v === "number") out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /* ---------------- Planner ---------------- */
@@ -370,6 +384,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const history: HistoryEntry[] = [];
     const maxSteps = 11;
 
+    // 🔸 START assistant turn
+    const turnId = metricsStore.startAssistantTurn({ user: prompt });
+
     for (let step = 0; step < maxSteps; step++) {
       console.log(`\n--- 🔄 AGENT LOOP: STEP ${step + 1} ---`);
 
@@ -383,6 +400,18 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
       if (plan.action === "final_answer") {
         console.log("✅ AI decided to provide the final answer.");
+
+        // 🔸 END turn with final message
+        metricsStore.endAssistantTurn(turnId, plan.answer ?? "");
+
+        // 🔸 Auto-validate the answer using any grounded numbers we collected
+        const t = metricsStore.getLastTurn?.();
+        const grounded = t?.groundedNumbers ?? {};
+        for (const [label, value] of Object.entries(grounded)) {
+          if (typeof value === "number") {
+            metricsStore.autoValidateFromAnswer(turnId, label, value, 0);
+          }
+        }
 
         const latestPayload = extractToolJsonPayload(history[history.length - 1]?.tool_result);
         const chart = wantsChart
@@ -401,12 +430,24 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         console.log(`🧠 AI wants to call tool: ${plan.tool_name}`);
         console.log(`   With args: ${JSON.stringify(plan.tool_args)}`);
 
+        metricsStore.noteToolUsed(turnId, plan.tool_name);
+
         const normalizedArgs = normalizeToolArgs(plan.tool_args);
         if (JSON.stringify(normalizedArgs) !== JSON.stringify(plan.tool_args)) {
           console.log(`   Normalized args: ${JSON.stringify(normalizedArgs)}`);
         }
-        const result = await mcp.callTool(plan.tool_name, normalizedArgs);
+
+        const result = await withToolLogging(plan.tool_name, normalizedArgs, async () => {
+          return mcp.callTool(plan.tool_name!, normalizedArgs);
+        });
+
         console.log(`   Tool Result: ${JSON.stringify(result).substring(0, 200)}...`);
+
+        const payload = extractToolJsonPayload(result);
+        const truth = collectGroundTruthNumbers(payload);
+        if (truth) {
+          metricsStore.provideGroundTruth(turnId, truth);
+        }
 
         history.push({
           tool_name: plan.tool_name,
@@ -418,6 +459,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       }
     }
 
+    // If we got here, we exceeded max steps
+    metricsStore.endAssistantTurn(turnId, "[aborted: max steps exceeded]");
     return res.status(500).json({
       error: "The agent could not complete the request within the maximum number of steps.",
       history,

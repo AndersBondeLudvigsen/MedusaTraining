@@ -2,7 +2,9 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { StdioClientTransport } = require("@modelcontextprotocol/sdk/client/stdio.js");
+const {
+  StdioClientTransport,
+} = require("@modelcontextprotocol/sdk/client/stdio.js");
 
 export type McpClientOptions = {
   /** Absolute path to Node executable, defaults to `process.execPath` */
@@ -29,9 +31,12 @@ export class MedusaMcpClient {
       env: opts.env,
       stderr: "inherit",
     });
-  this.client = new Client({ name: "my-medusa-store", version: "0.0.1" }, {
-      capabilities: { tools: {} },
-    });
+    this.client = new Client(
+      { name: "my-medusa-store", version: "0.0.1" },
+      {
+        capabilities: { tools: {} },
+      }
+    );
   }
 
   async connect() {
@@ -39,11 +44,22 @@ export class MedusaMcpClient {
   }
 
   async listTools() {
-    return await this.client.listTools({});
+    const started = Date.now();
+    try {
+      const res = await this.client.listTools({});
+      return res;
+    } finally {
+      // We intentionally do not log listTools as a tool-call event to avoid noise
+      void started;
+    }
   }
 
   async callTool(name: string, args: Record<string, any>) {
-    return await this.client.callTool({ name, arguments: args });
+    // Lazy import to avoid circular
+    const { withToolLogging } = require("../metrics/store");
+    return await withToolLogging(name, args, async () => {
+      return await this.client.callTool({ name, arguments: args });
+    });
   }
 
   async close() {
