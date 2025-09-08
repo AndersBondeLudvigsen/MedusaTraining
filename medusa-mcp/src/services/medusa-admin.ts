@@ -121,7 +121,9 @@ export default class MedusaAdminService {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        ...(this.adminToken ? { Authorization: `Bearer ${this.adminToken}` } : {}),
+        ...(this.adminToken
+          ? { Authorization: `Bearer ${this.adminToken}` }
+          : {}),
       },
     });
     return res as T;
@@ -181,7 +183,10 @@ export default class MedusaAdminService {
   }
 
   /** Count orders in [fromIso, toIso) using client-side filtered list. */
-  private async countOrdersInRange(fromIso: string, toIso: string): Promise<number> {
+  private async countOrdersInRange(
+    fromIso: string,
+    toIso: string
+  ): Promise<number> {
     const orders = await this.fetchOrdersInRange(fromIso, toIso);
     return orders.length;
   }
@@ -233,7 +238,9 @@ export default class MedusaAdminService {
     this.variantToProductCache.clear();
   }
 
-  private async resolveProductFromVariant(variantId: string): Promise<VariantResolution> {
+  private async resolveProductFromVariant(
+    variantId: string
+  ): Promise<VariantResolution> {
     if (this.variantToProductCache.has(variantId)) {
       return this.variantToProductCache.get(variantId)!;
     }
@@ -258,7 +265,11 @@ export default class MedusaAdminService {
       this.variantToProductCache.set(variantId, entry);
       return entry;
     } catch {
-      const entry: VariantResolution = { product_id: undefined, title: null, sku: null };
+      const entry: VariantResolution = {
+        product_id: undefined,
+        title: null,
+        sku: null,
+      };
       this.variantToProductCache.set(variantId, entry);
       return entry;
     }
@@ -370,7 +381,9 @@ export default class MedusaAdminService {
                 }
                 return acc;
               }, {} as Record<string, ZodTypeAny>),
-            ...(method !== "get" ? { payload: z.record(z.any()).optional() } : {}),
+            ...(method !== "get"
+              ? { payload: z.record(z.any()).optional() }
+              : {}),
             ...(method !== "get"
               ? Array.from(bodyKeys).reduce((acc, key) => {
                   const propType = propertyTypes.get(key) as
@@ -399,7 +412,9 @@ export default class MedusaAdminService {
                       acc[key] = z
                         .array(z.any())
                         .optional()
-                        .describe(propType.description || `Array field: ${key}`);
+                        .describe(
+                          propType.description || `Array field: ${key}`
+                        );
                     }
                   } else if (propType?.type === "object") {
                     acc[key] = z
@@ -423,7 +438,9 @@ export default class MedusaAdminService {
                     acc[key] = z
                       .boolean()
                       .optional()
-                      .describe(propType.description || `Boolean field: ${key}`);
+                      .describe(
+                        propType.description || `Boolean field: ${key}`
+                      );
                   } else {
                     acc[key] = z
                       .any()
@@ -456,13 +473,23 @@ export default class MedusaAdminService {
             }
 
             // Build body from non-path/query inputs
-            const basePayloadRaw = (input as Record<string, unknown>)["payload"];
+            const basePayloadRaw = (input as Record<string, unknown>)[
+              "payload"
+            ];
             let initialBody: Record<string, unknown> = {};
-            if (basePayloadRaw && typeof basePayloadRaw === "object" && !Array.isArray(basePayloadRaw)) {
+            if (
+              basePayloadRaw &&
+              typeof basePayloadRaw === "object" &&
+              !Array.isArray(basePayloadRaw)
+            ) {
               initialBody = { ...(basePayloadRaw as Record<string, unknown>) };
             }
             const body = Object.entries(input).reduce((acc, [key, value]) => {
-              if (pathParams.includes(key) || queryParamNames.includes(key) || key === "payload")
+              if (
+                pathParams.includes(key) ||
+                queryParamNames.includes(key) ||
+                key === "payload"
+              )
                 return acc;
               if (value === undefined) return acc;
               (acc as Record<string, unknown>)[key] = value as unknown;
@@ -487,7 +514,9 @@ export default class MedusaAdminService {
                 headers: {
                   "Content-Type": "application/json",
                   Accept: "application/json",
-                  ...(this.adminToken ? { Authorization: `Bearer ${this.adminToken}` } : {}),
+                  ...(this.adminToken
+                    ? { Authorization: `Bearer ${this.adminToken}` }
+                    : {}),
                 },
               });
               return response;
@@ -498,7 +527,9 @@ export default class MedusaAdminService {
               headers: {
                 "Content-Type": "application/json",
                 Accept: "application/json",
-                ...(this.adminToken ? { Authorization: `Bearer ${this.adminToken}` } : {}),
+                ...(this.adminToken
+                  ? { Authorization: `Bearer ${this.adminToken}` }
+                  : {}),
               },
               body,
             });
@@ -514,13 +545,25 @@ export default class MedusaAdminService {
     };
 
     if ((refFunction as unknown as { get?: MethodShape }).get) {
-      tools.push(buildTool("get", (refFunction as unknown as { get: MethodShape }).get));
+      tools.push(
+        buildTool("get", (refFunction as unknown as { get: MethodShape }).get)
+      );
     }
     if ((refFunction as unknown as { post?: MethodShape }).post) {
-      tools.push(buildTool("post", (refFunction as unknown as { post: MethodShape }).post));
+      tools.push(
+        buildTool(
+          "post",
+          (refFunction as unknown as { post: MethodShape }).post
+        )
+      );
     }
     if ((refFunction as unknown as { delete?: MethodShape }).delete) {
-      tools.push(buildTool("delete", (refFunction as unknown as { delete: MethodShape }).delete));
+      tools.push(
+        buildTool(
+          "delete",
+          (refFunction as unknown as { delete: MethodShape }).delete
+        )
+      );
     }
 
     return tools;
@@ -571,7 +614,9 @@ export default class MedusaAdminService {
       return { start: s, end: e };
     };
 
-    const coerceGroupBy = (input: Record<string, unknown>): "product" | "variant" | undefined => {
+    const coerceGroupBy = (
+      input: Record<string, unknown>
+    ): "product" | "variant" | undefined => {
       const raw =
         (input.group_by as string | undefined) ||
         (input.grouping as string | undefined) ||
@@ -579,8 +624,8 @@ export default class MedusaAdminService {
         (input.groupby as string | undefined);
       if (!raw) return undefined;
       const v = String(raw).toLowerCase().trim();
-      if (v.startsWith("product")) return "product";     // "product", "product_id", "products", etc.
-      if (v.startsWith("variant")) return "variant";     // "variant", "variant_id", "variants", etc.
+      if (v.startsWith("product")) return "product"; // "product", "product_id", "products", etc.
+      if (v.startsWith("variant")) return "variant"; // "variant", "variant_id", "variants", etc.
       return undefined;
     };
 
@@ -596,8 +641,10 @@ export default class MedusaAdminService {
       if (!raw) return undefined;
       const v = String(raw).toLowerCase().trim();
       if (["quantity", "qty", "units", "unit"].includes(v)) return "quantity";
-      if (["orders", "order", "order_count", "num_orders"].includes(v)) return "orders";
-      if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v)) return "revenue";
+      if (["orders", "order", "order_count", "num_orders"].includes(v))
+        return "orders";
+      if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v))
+        return "revenue";
       return undefined;
     };
 
@@ -621,9 +668,13 @@ export default class MedusaAdminService {
             "Missing required range. Provide (start,end) or (start_date,end_date) or (from,to) as ISO date-times."
           );
         }
-        const schema = z.object({ start: z.string().datetime(), end: z.string().datetime() });
+        const schema = z.object({
+          start: z.string().datetime(),
+          end: z.string().datetime(),
+        });
         const parsed = schema.safeParse({ start, end });
-        if (!parsed.success) throw new Error(`Invalid input: ${parsed.error.message}`);
+        if (!parsed.success)
+          throw new Error(`Invalid input: ${parsed.error.message}`);
         const count = await this.countOrdersInRange(start, end);
         return { start, end, count };
       },
@@ -642,12 +693,20 @@ export default class MedusaAdminService {
         from: z.string().datetime().optional(),
         to: z.string().datetime().optional(),
 
-        group_by: z.union([z.literal("product"), z.literal("variant")]).optional(),
+        group_by: z
+          .union([z.literal("product"), z.literal("variant")])
+          .optional(),
         grouping: z.string().optional(),
         group: z.string().optional(),
         groupby: z.string().optional(),
 
-        metric: z.union([z.literal("quantity"), z.literal("revenue"), z.literal("orders")]).optional(),
+        metric: z
+          .union([
+            z.literal("quantity"),
+            z.literal("revenue"),
+            z.literal("orders"),
+          ])
+          .optional(),
         measure: z.string().optional(),
         by: z.string().optional(),
         agg: z.string().optional(),
@@ -668,24 +727,34 @@ export default class MedusaAdminService {
         // grouping & metric
         const group_by = coerceGroupBy(input);
         const metric = coerceMetric(input);
-        if (!group_by) throw new Error("Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'.");
-        if (!metric) throw new Error("Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'.");
+        if (!group_by)
+          throw new Error(
+            "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'."
+          );
+        if (!metric)
+          throw new Error(
+            "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'."
+          );
 
         // other params
         const limit =
           typeof input.limit === "number" && Number.isInteger(input.limit)
             ? Math.max(1, Math.min(50, input.limit))
             : 5;
-        const sort = (String(input.sort ?? "desc").toLowerCase() === "asc" ? "asc" : "desc") as
-          | "asc"
-          | "desc";
+        const sort = (
+          String(input.sort ?? "desc").toLowerCase() === "asc" ? "asc" : "desc"
+        ) as "asc" | "desc";
 
         // re-validate final values
         const schema = z.object({
           start: z.string().datetime(),
           end: z.string().datetime(),
           group_by: z.union([z.literal("product"), z.literal("variant")]),
-          metric: z.union([z.literal("quantity"), z.literal("revenue"), z.literal("orders")]),
+          metric: z.union([
+            z.literal("quantity"),
+            z.literal("revenue"),
+            z.literal("orders"),
+          ]),
           limit: z.number().int().min(1).max(50),
           sort: z.union([z.literal("desc"), z.literal("asc")]),
         });
@@ -697,7 +766,8 @@ export default class MedusaAdminService {
           limit,
           sort,
         });
-        if (!parsed.success) throw new Error(`Invalid input: ${parsed.error.message}`);
+        if (!parsed.success)
+          throw new Error(`Invalid input: ${parsed.error.message}`);
 
         const { start, end } = parsed.data;
 
@@ -724,9 +794,12 @@ export default class MedusaAdminService {
           };
           if (patch.quantity) curr.quantity += patch.quantity;
           if (patch.revenue) curr.revenue += patch.revenue;
-          if (patch.orderIds) patch.orderIds.forEach((id) => curr.orderIds.add(id));
-          if (patch.product_id && !curr.product_id) curr.product_id = patch.product_id;
-          if (patch.variant_id && !curr.variant_id) curr.variant_id = patch.variant_id;
+          if (patch.orderIds)
+            patch.orderIds.forEach((id) => curr.orderIds.add(id));
+          if (patch.product_id && !curr.product_id)
+            curr.product_id = patch.product_id;
+          if (patch.variant_id && !curr.variant_id)
+            curr.variant_id = patch.variant_id;
           if (patch.sku && !curr.sku) curr.sku = patch.sku;
           if (patch.title && !curr.title) curr.title = patch.title;
           aggMap.set(key, curr);
@@ -768,7 +841,10 @@ export default class MedusaAdminService {
 
             const sku = it?.sku ?? it?.variant?.sku ?? null;
             const title =
-              it?.title ?? it?.variant?.title ?? it?.variant?.product?.title ?? null;
+              it?.title ??
+              it?.variant?.title ??
+              it?.variant?.product?.title ??
+              null;
 
             const key = group_by === "variant" ? variantId : productId;
             if (!key) continue;
@@ -788,13 +864,17 @@ export default class MedusaAdminService {
         const rows = Array.from(aggMap.values()).map((r) => {
           const ordersCount = r.orderIds.size;
           const score =
-            metric === "quantity" ? r.quantity :
-            metric === "revenue"  ? r.revenue  :
-            ordersCount;
+            metric === "quantity"
+              ? r.quantity
+              : metric === "revenue"
+              ? r.revenue
+              : ordersCount;
           return { ...r, score, orders: ordersCount };
         });
 
-        rows.sort((a, b) => (sort === "desc" ? b.score - a.score : a.score - b.score));
+        rows.sort((a, b) =>
+          sort === "desc" ? b.score - a.score : a.score - b.score
+        );
         const top = rows.slice(0, limit).map((r, i) => ({
           rank: i + 1,
           product_id: r.product_id ?? null,
@@ -806,9 +886,11 @@ export default class MedusaAdminService {
           orders: r.orders,
           metric: metric,
           value:
-            metric === "quantity" ? r.quantity :
-            metric === "revenue"  ? r.revenue  :
-            r.orders,
+            metric === "quantity"
+              ? r.quantity
+              : metric === "revenue"
+              ? r.revenue
+              : r.orders,
         }));
 
         return {
