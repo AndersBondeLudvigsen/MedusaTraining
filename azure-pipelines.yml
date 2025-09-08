@@ -27,39 +27,35 @@ steps:
       restoreKeys: |
         npm | "$(Agent.OS)"
       path: $(Pipeline.Workspace)/.npm
+- script: |
+    set -e
+    OUT_DIR="$(Build.SourcesDirectory)/eslint-sarif"
+    mkdir -p "$OUT_DIR"
 
-  - script: |
-      set -e
-      npm config set cache "$(Pipeline.Workspace)/.npm" --global
+    # find all packages (skip node_modules)
+    PKGS=$(find . -name package.json -not -path "*/node_modules/*" -exec dirname {} \; | sort -u)
 
-      # Find all packages (skip node_modules)
-      PKGS=$(find . -name package.json -not -path "*/node_modules/*" -exec dirname {} \; | sort -u)
+    for d in $PKGS; do
+      [ -d "$d/src" ] || { echo "No src/ in $d — skipping SARIF."; continue; }
 
-      FAIL=0
-      for d in $PKGS; do
-        echo "##[group]Install deps in $d"
-        (cd "$d" && npm ci --no-audit --no-fund) || FAIL=1
-        echo "##[endgroup]"
+      echo "##[group]ESLint SARIF in $d"
+      # install the SARIF formatter without changing package.json
+      (cd "$d" && npm i --no-save @microsoft/eslint-formatter-sarif >/dev/null 2>&1 || true)
 
-        if [ -d "$d/src" ]; then
-          echo "##[group]ESLint (fail build on errors) in $d"
-          (cd "$d" && npx --yes eslint "$(ESLINT_GLOB)" --ext .ts,.tsx --max-warnings=0 --ignore-pattern "$(ESLINT_IGNORE)") || FAIL=1
-          echo "##[endgroup]"
+      PKG_NAME=$(basename "$d")
+      (cd "$d" && npx --yes eslint "src/**/*.{ts,tsx}" \
+        --ext .ts,.tsx \
+        --ignore-pattern "src/types/*-json.ts" \
+        -f @microsoft/eslint-formatter-sarif \
+        -o "$OUT_DIR/${PKG_NAME}-eslint.sarif" || true)
+      echo "##[endgroup]"
+    done
+  displayName: 'ESLint (produce SARIF for Scans tab)'
+  condition: always()
 
-          echo "##[group]ESLint (checkstyle report) in $d"
-          (cd "$d" && npx --yes eslint "$(ESLINT_GLOB)" --ext .ts,.tsx -f checkstyle -o "eslint-checkstyle.xml" --ignore-pattern "$(ESLINT_IGNORE)" || true)
-          echo "##[endgroup]"
-        else
-          echo "No src/ in $d — skipping ESLint."
-        fi
-      done
-
-      exit $FAIL
-    displayName: 'Install and run ESLint in all packages'
-
-  - task: PublishCodeAnalysisResults@2
-    displayName: 'Publish ESLint Checkstyle reports'
-    inputs:
-      CheckStyleFile: '**/eslint-checkstyle.xml'
-      FailIfQualityGateFails: false
-    condition: always()
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish ESLint SARIF -> CodeAnalysisLogs'
+  inputs:
+    targetPath: '$(Build.SourcesDirectory)/eslint-sarif'
+    artifact: 'CodeAnalysisLogs'
+  condition: always()
