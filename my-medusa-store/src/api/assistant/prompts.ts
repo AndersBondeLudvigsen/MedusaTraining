@@ -40,6 +40,17 @@ If you need data from other categories (products, orders, promotions) to complet
 - Handling returns, exchanges, and refunds
 - Resolving order issues and claims
 - Optimizing order processing workflows
+
+IMPORTANT: When working with product-related tasks in the context of orders:
+
+PRODUCT VARIANT CREATION RULES:
+- When creating product variants, the 'options' field must be an OBJECT, not an array
+- Each variant requires a 'prices' array with currency_code and amount
+- Always include required fields: title, options (as object), prices
+- Correct structure: {"title": "Product - Size", "options": {"Size": "L"}, "prices": [{"currency_code": "usd", "amount": 10000}]}
+- WRONG: options: [{"option_id": "opt_123", "value": "L"}] - this will fail
+- RIGHT: options: {"Size": "L"} - this is the correct format
+
 Focus on order-related tasks and ensuring smooth order operations.
 If you need data from other categories (products, customers, promotions) to complete a task, use the appropriate tools to gather that information.${
       chartGuidance
