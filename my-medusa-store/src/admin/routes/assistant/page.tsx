@@ -11,6 +11,9 @@ const AssistantPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Category selection
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+
   // NEW: chart controls
   const [wantsChart, setWantsChart] = useState<boolean>(false);
   const [chartType, setChartType] = useState<"bar" | "line">("bar");
@@ -23,6 +26,7 @@ const AssistantPage = () => {
   const STORAGE_KEY_WANTS_CHART = "assistant:wantsChart";
   const STORAGE_KEY_CHART_TYPE = "assistant:chartType";
   const STORAGE_KEY_CHART_TITLE = "assistant:chartTitle";
+  const STORAGE_KEY_CATEGORY = "assistant:category";
 
   useEffect(() => {
     try {
@@ -48,6 +52,9 @@ const AssistantPage = () => {
 
       const savedTitle = localStorage.getItem(STORAGE_KEY_CHART_TITLE);
       if (savedTitle != null) setChartTitle(savedTitle);
+
+      const savedCategory = localStorage.getItem(STORAGE_KEY_CATEGORY);
+      if (savedCategory) setSelectedCategory(savedCategory);
     } catch {}
   }, []);
 
@@ -100,6 +107,28 @@ const AssistantPage = () => {
     } catch {}
   }, [chartTitle]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CATEGORY, selectedCategory);
+    } catch {}
+  }, [selectedCategory]);
+
+  // Category-specific prompts and placeholders
+  const getCategoryPlaceholder = (category: string) => {
+    switch (category) {
+      case "customers":
+        return 'Ask about customers (e.g. "How many new customers did we get this month?" or "Show me customer demographics")';
+      case "orders":
+        return 'Ask about orders (e.g. "How many orders do I have in 2025, grouped by month?" or "What is my average order value?")';
+      case "products":
+        return 'Ask about products (e.g. "Which products are my best sellers?" or "Show me products with low inventory")';
+      case "promotions":
+        return 'Ask about promotions (e.g. "How effective were my recent promotions?" or "Show me discount usage statistics")';
+      default:
+        return 'Ask the assistant (e.g. "How many orders do I have in 2025, grouped by month?")';
+    }
+  };
+
   const canSubmit = useMemo(
     () => prompt.trim().length > 0 && !loading,
     [prompt, loading]
@@ -113,9 +142,10 @@ const AssistantPage = () => {
     setChart(null);
     try {
       const body: any = {
-        prompt,
+        prompt: prompt,
         wantsChart,
         chartType,
+        category: selectedCategory,
       };
       if (chartTitle && chartTitle.trim().length > 0) {
         body.chartTitle = chartTitle.trim();
@@ -144,7 +174,7 @@ const AssistantPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [prompt, canSubmit, wantsChart, chartType, chartTitle]);
+  }, [prompt, canSubmit, wantsChart, chartType, chartTitle, selectedCategory]);
 
   const onClear = useCallback(() => {
     setPrompt("");
@@ -173,6 +203,38 @@ const AssistantPage = () => {
           Ask the assistant for help with merchandising, pricing, and more.
         </Text>
 
+        {/* Category Selection */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="category-select"
+            className="text-ui-fg-subtle font-medium"
+          >
+            Category:
+          </label>
+          <select
+            id="category-select"
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="rounded-md border border-ui-border-base bg-ui-bg-base text-ui-fg-base px-3 py-2 min-w-[150px]"
+          >
+            <option value="">Select a category</option>
+            <option value="customers">Customers</option>
+            <option value="orders">Orders</option>
+            <option value="products">Products</option>
+            <option value="promotions">Promotions</option>
+          </select>
+        </div>
+
+        {/* Category Context Indicator */}
+        {selectedCategory && (
+          <div className="text-xs text-ui-fg-muted bg-ui-bg-subtle px-2 py-1 rounded border">
+            <strong>Context:</strong>{" "}
+            {selectedCategory.charAt(0).toUpperCase() +
+              selectedCategory.slice(1)}{" "}
+            focus mode
+          </div>
+        )}
+
         {/* Prompt input */}
         <textarea
           value={prompt}
@@ -183,7 +245,7 @@ const AssistantPage = () => {
               onAsk();
             }
           }}
-          placeholder='Ask the assistant (e.g. "How many orders do I have in 2025, grouped by month?" )'
+          placeholder={getCategoryPlaceholder(selectedCategory)}
           rows={4}
           className="border-ui-border-base bg-ui-bg-base text-ui-fg-base rounded-md border p-2"
         />
@@ -208,7 +270,9 @@ const AssistantPage = () => {
             <select
               disabled={!wantsChart}
               value={chartType}
-              onChange={(e) => setChartType((e.target.value as "bar" | "line") ?? "bar")}
+              onChange={(e) =>
+                setChartType((e.target.value as "bar" | "line") ?? "bar")
+              }
               className="rounded-md border p-1 bg-ui-bg-base"
             >
               <option value="bar">Bar</option>
