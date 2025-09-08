@@ -23,9 +23,13 @@ type AnalyticsService = {
     >;
 };
 
-export function createAnalyticsTools(analytics: AnalyticsService) {
+export function createAnalyticsTools(
+    analytics: AnalyticsService
+): Array<ReturnType<typeof defineTool>> {
     // alias coercers
-    const coerceRange = (input: Record<string, unknown>) => {
+    const coerceRange = (
+        input: Record<string, unknown>
+    ): { start?: string; end?: string } => {
         const s =
             (input.start as string | undefined) ||
             (input.start_date as string | undefined) ||
@@ -74,10 +78,26 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
         if (["quantity", "qty", "units", "unit"].includes(v)) {
             return "quantity";
         }
-        if (["orders", "order", "order_count", "num_orders"].includes(v)) {
+        if (
+            ["orders", "order", "order_count", "num_orders", "count"].includes(
+                v
+            )
+        ) {
             return "orders";
         }
-        if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v)) {
+        if (
+            [
+                "revenue",
+                "sales",
+                "amount",
+                "gmv",
+                "turnover",
+                "sum",
+                "total",
+                "total_sales",
+                "sum_sales"
+            ].includes(v)
+        ) {
             return "revenue";
         }
         return undefined;
@@ -118,7 +138,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
     const sales_aggregate = defineTool((z) => ({
         name: "sales_aggregate",
         description:
-            "Aggregate sales in a UTC date range with grouping and metric. Returns actable IDs.",
+            "Aggregate sales in a UTC date range with grouping and metric. Metric accepts: quantity (qty/units), revenue (sales/amount/total/sum), orders (count). Returns actable IDs.",
         inputSchema: {
             start: z.string().datetime().optional(),
             end: z.string().datetime().optional(),
@@ -127,27 +147,22 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             from: z.string().datetime().optional(),
             to: z.string().datetime().optional(),
 
-            group_by: z
-                .union([z.literal("product"), z.literal("variant")])
-                .optional(),
+            // Accept any string for group_by and metric; we coerce/validate in handler
+            group_by: z.string().optional(),
             grouping: z.string().optional(),
             group: z.string().optional(),
             groupby: z.string().optional(),
 
-            metric: z
-                .union([
-                    z.literal("quantity"),
-                    z.literal("revenue"),
-                    z.literal("orders")
-                ])
-                .optional(),
+            metric: z.string().optional(),
             measure: z.string().optional(),
             by: z.string().optional(),
             agg: z.string().optional(),
             aggregate: z.string().optional(),
 
             limit: z.number().int().min(1).max(50).default(5),
-            sort: z.union([z.literal("desc"), z.literal("asc")]).default("desc")
+            sort: z.union([z.literal("desc"), z.literal("asc")]).default("desc"),
+            order: z.string().optional(),
+            order_by: z.string().optional()
         },
         handler: async (input: Record<string, unknown>): Promise<unknown> => {
             const rng = coerceRange(input);
@@ -166,7 +181,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             }
             if (!metric) {
                 throw new Error(
-                    "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'."
+                    "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders' (aliases: qty/units, sales/amount/total/sum, count)."
                 );
             }
 
@@ -174,11 +189,26 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 typeof input.limit === "number" && Number.isInteger(input.limit)
                     ? Math.max(1, Math.min(50, input.limit))
                     : 5;
-            const sort = (
-                String(input.sort ?? "desc").toLowerCase() === "asc"
-                    ? "asc"
-                    : "desc"
-            ) as "asc" | "desc";
+            // Sort coercion: support 'order' and 'order_by' like "quantity asc"
+            const sortToken = ((): string => {
+                const o = (input.order as string | undefined)?.toLowerCase();
+                const ob = (
+                    input.order_by as string | undefined
+                )?.toLowerCase();
+                if (o === "asc" || o === "desc") {
+                    return o;
+                }
+                if (ob?.includes("asc")) {
+                    return "asc";
+                }
+                if (ob?.includes("desc")) {
+                    return "desc";
+                }
+                return String(input.sort ?? "desc").toLowerCase();
+            })();
+            const sort = (sortToken === "asc" ? "asc" : "desc") as
+                | "asc"
+                | "desc";
 
             const schema = z.object({
                 start: z.string().datetime(),
