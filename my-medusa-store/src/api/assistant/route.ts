@@ -382,9 +382,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const availableTools: McpTool[] = (tools.tools ?? []) as any;
 
     const history: HistoryEntry[] = [];
-    const maxSteps = 11;
+    const maxSteps = 15;
 
-    // 🔸 START assistant turn
     const turnId = metricsStore.startAssistantTurn({ user: prompt });
 
     for (let step = 0; step < maxSteps; step++) {
