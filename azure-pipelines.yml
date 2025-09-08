@@ -27,35 +27,36 @@ steps:
       restoreKeys: |
         npm | "$(Agent.OS)"
       path: $(Pipeline.Workspace)/.npm
-- script: |
-    set -e
-    OUT_DIR="$(Build.SourcesDirectory)/eslint-sarif"
-    mkdir -p "$OUT_DIR"
 
-    # find all packages (skip node_modules)
-    PKGS=$(find . -name package.json -not -path "*/node_modules/*" -exec dirname {} \; | sort -u)
+  - script: |
+      set -e
+      OUT_DIR="$(Build.SourcesDirectory)/eslint-sarif"
+      mkdir -p "$OUT_DIR"
 
-    for d in $PKGS; do
-      [ -d "$d/src" ] || { echo "No src/ in $d — skipping SARIF."; continue; }
+      # find all packages (skip node_modules)
+      PKGS=$(find . -name package.json -not -path "*/node_modules/*" -exec dirname {} \; | sort -u)
 
-      echo "##[group]ESLint SARIF in $d"
-      # install the SARIF formatter without changing package.json
-      (cd "$d" && npm i --no-save @microsoft/eslint-formatter-sarif >/dev/null 2>&1 || true)
+      for d in $PKGS; do
+        [ -d "$d/src" ] || { echo "No src/ in $d — skipping SARIF."; continue; }
 
-      PKG_NAME=$(basename "$d")
-      (cd "$d" && npx --yes eslint "src/**/*.{ts,tsx}" \
-        --ext .ts,.tsx \
-        --ignore-pattern "src/types/*-json.ts" \
-        -f @microsoft/eslint-formatter-sarif \
-        -o "$OUT_DIR/${PKG_NAME}-eslint.sarif" || true)
-      echo "##[endgroup]"
-    done
-  displayName: 'ESLint (produce SARIF for Scans tab)'
-  condition: always()
+        echo "##[group]ESLint SARIF in $d"
+        # install the SARIF formatter without changing package.json
+        (cd "$d" && npm i --no-save @microsoft/eslint-formatter-sarif >/dev/null 2>&1 || true)
 
-- task: PublishPipelineArtifact@1
-  displayName: 'Publish ESLint SARIF -> CodeAnalysisLogs'
-  inputs:
-    targetPath: '$(Build.SourcesDirectory)/eslint-sarif'
-    artifact: 'CodeAnalysisLogs'
-  condition: always()
+        PKG_NAME=$(basename "$d")
+        (cd "$d" && npx --yes eslint "src/**/*.{ts,tsx}" \
+          --ext .ts,.tsx \
+          --ignore-pattern "src/types/*-json.ts" \
+          -f @microsoft/eslint-formatter-sarif \
+          -o "$OUT_DIR/${PKG_NAME}-eslint.sarif" || true)
+        echo "##[endgroup]"
+      done
+    displayName: 'ESLint (produce SARIF for Scans tab)'
+    condition: always()
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish ESLint SARIF -> CodeAnalysisLogs'
+    inputs:
+      targetPath: '$(Build.SourcesDirectory)/eslint-sarif'
+      artifact: 'CodeAnalysisLogs'
+    condition: always()
