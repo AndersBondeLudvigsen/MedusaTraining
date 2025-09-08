@@ -3,7 +3,7 @@ import { getMcp } from "../../lib/mcp/manager";
 import { metricsStore, withToolLogging } from "../../lib/metrics/store";
 import { McpTool, HistoryEntry, ChartType } from "./types";
 import { extractToolJsonPayload, normalizeToolArgs } from "./utils";
-import { buildChartFromLatestTool } from "./charts";
+import { buildChartFromLatestTool, buildChartFromAnswer } from "./charts";
 import { planNextStepWithGemini } from "./service";
 import { collectGroundTruthNumbers } from "./validation";
 
@@ -89,7 +89,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           history[history.length - 1]?.tool_result
         );
         const chart = wantsChart
-          ? buildChartFromLatestTool(history, chartType, chartTitle) ?? null
+          ? buildChartFromAnswer(plan.answer, chartType, chartTitle) ||
+            buildChartFromLatestTool(history, chartType, chartTitle) ||
+            null
           : null;
 
         return res.json({
