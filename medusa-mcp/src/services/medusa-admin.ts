@@ -4,6 +4,7 @@ import { ZodTypeAny } from "zod";
 import adminJson from "../oas/admin.json";
 import { SdkRequestType, Parameter } from "../types/admin-json";
 import { defineTool } from "../utils/define-tools";
+import { AdminVariantMaybe, AdminOrderItemMaybe, AdminOrderMinimal, VariantResolution   } from "../types/medusa-admin";
 
 config();
 
@@ -12,39 +13,6 @@ const MEDUSA_BACKEND_URL =
 
 const MEDUSA_USERNAME = process.env.MEDUSA_USERNAME ?? "medusa_user";
 const MEDUSA_PASSWORD = process.env.MEDUSA_PASSWORD ?? "medusa_pass";
-
-type AdminVariantMaybe = {
-  id?: string;
-  product_id?: string;
-  product?: { id?: string; title?: string } | null;
-  sku?: string | null;
-  title?: string | null;
-};
-
-type AdminOrderItemMaybe = {
-  id?: string;
-  quantity?: number;
-  unit_price?: number;
-  total?: number;
-  title?: string | null;
-  sku?: string | null;
-  variant_id?: string | null;
-  product_id?: string | null; // some setups include this
-  variant?: AdminVariantMaybe | null; // when expanded/detail
-};
-
-type AdminOrderMinimal = {
-  id?: string;
-  created_at?: string;
-  canceled_at?: string | null;
-  items?: AdminOrderItemMaybe[]; // present on detail; sometimes on list depending on setup
-};
-
-type VariantResolution = {
-  product_id?: string;
-  title?: string | null;
-  sku?: string | null;
-};
 
 export default class MedusaAdminService {
   sdk: Medusa;
