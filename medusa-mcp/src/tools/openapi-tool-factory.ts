@@ -72,7 +72,11 @@ export function createOpenApiTools(
         };
         if (requestBodySchema) collectProps(requestBodySchema);
 
-        const usageHint = (operationId: string, method: string, pathHint: string) => {
+        const usageHint = (
+          operationId: string,
+          method: string,
+          pathHint: string
+        ) => {
           if (method === "post") {
             if (operationId.includes("Batch")) {
               return " **BATCH OPERATION**: Only use this for bulk operations with multiple items. Requires arrays: create[], update[], delete[]. For single operations, use the non-batch version.";
@@ -87,7 +91,10 @@ export function createOpenApiTools(
               return " **INVENTORY**: Use for stock management. Requires location_id, inventory_item_id, stocked_quantity.";
             }
           }
-          if (method === "get" && (operationId.includes("GetOrders") || pathHint === "/admin/orders")) {
+          if (
+            method === "get" &&
+            (operationId.includes("GetOrders") || pathHint === "/admin/orders")
+          ) {
             return " NOTE: For counting or summarizing orders (e.g., 'how many orders', 'total sales'), prefer the analytics tools: orders_count or sales_aggregate.";
           }
           return "";

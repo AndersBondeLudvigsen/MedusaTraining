@@ -64,8 +64,10 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
     if (!raw) return undefined;
     const v = String(raw).toLowerCase().trim();
     if (["quantity", "qty", "units", "unit"].includes(v)) return "quantity";
-    if (["orders", "order", "order_count", "num_orders"].includes(v)) return "orders";
-    if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v)) return "revenue";
+    if (["orders", "order", "order_count", "num_orders"].includes(v))
+      return "orders";
+    if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v))
+      return "revenue";
     return undefined;
   };
 
@@ -88,9 +90,13 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
           "Missing required range. Provide (start,end) or (start_date,end_date) or (from,to) as ISO date-times."
         );
       }
-      const schema = z.object({ start: z.string().datetime(), end: z.string().datetime() });
+      const schema = z.object({
+        start: z.string().datetime(),
+        end: z.string().datetime(),
+      });
       const parsed = schema.safeParse({ start, end });
-      if (!parsed.success) throw new Error(`Invalid input: ${parsed.error.message}`);
+      if (!parsed.success)
+        throw new Error(`Invalid input: ${parsed.error.message}`);
       const count = await analytics.ordersCount(start, end);
       return { start, end, count };
     },
@@ -108,12 +114,20 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
       from: z.string().datetime().optional(),
       to: z.string().datetime().optional(),
 
-      group_by: z.union([z.literal("product"), z.literal("variant")]).optional(),
+      group_by: z
+        .union([z.literal("product"), z.literal("variant")])
+        .optional(),
       grouping: z.string().optional(),
       group: z.string().optional(),
       groupby: z.string().optional(),
 
-      metric: z.union([z.literal("quantity"), z.literal("revenue"), z.literal("orders")]).optional(),
+      metric: z
+        .union([
+          z.literal("quantity"),
+          z.literal("revenue"),
+          z.literal("orders"),
+        ])
+        .optional(),
       measure: z.string().optional(),
       by: z.string().optional(),
       agg: z.string().optional(),
@@ -132,22 +146,32 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
 
       const group_by = coerceGroupBy(input);
       const metric = coerceMetric(input);
-      if (!group_by) throw new Error("Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'.");
-      if (!metric) throw new Error("Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'.");
+      if (!group_by)
+        throw new Error(
+          "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'."
+        );
+      if (!metric)
+        throw new Error(
+          "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'."
+        );
 
       const limit =
         typeof input.limit === "number" && Number.isInteger(input.limit)
           ? Math.max(1, Math.min(50, input.limit))
           : 5;
-      const sort = (String(input.sort ?? "desc").toLowerCase() === "asc" ? "asc" : "desc") as
-        | "asc"
-        | "desc";
+      const sort = (
+        String(input.sort ?? "desc").toLowerCase() === "asc" ? "asc" : "desc"
+      ) as "asc" | "desc";
 
       const schema = z.object({
         start: z.string().datetime(),
         end: z.string().datetime(),
         group_by: z.union([z.literal("product"), z.literal("variant")]),
-        metric: z.union([z.literal("quantity"), z.literal("revenue"), z.literal("orders")]),
+        metric: z.union([
+          z.literal("quantity"),
+          z.literal("revenue"),
+          z.literal("orders"),
+        ]),
         limit: z.number().int().min(1).max(50),
         sort: z.union([z.literal("desc"), z.literal("asc")]),
       });
@@ -159,7 +183,8 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
         limit,
         sort,
       });
-      if (!parsed.success) throw new Error(`Invalid input: ${parsed.error.message}`);
+      if (!parsed.success)
+        throw new Error(`Invalid input: ${parsed.error.message}`);
 
       const rows = await analytics.salesAggregate({
         start: parsed.data.start,
