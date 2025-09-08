@@ -1,5 +1,9 @@
 import { ChartSpec, ChartType, HistoryEntry } from "./types";
-import { extractToolJsonPayload, safeParseJSON, stripJsonFences } from "./utils";
+import {
+  extractToolJsonPayload,
+  safeParseJSON,
+  stripJsonFences,
+} from "./utils";
 
 const MONTHS_SHORT = [
   "Jan",
@@ -71,7 +75,9 @@ function monthify(key: string, v: any): any {
 function pickXY(row: Record<string, any>) {
   const keys = Object.keys(row);
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const keyByNorm: Record<string, string> = Object.fromEntries(keys.map((k) => [norm(k), k]));
+  const keyByNorm: Record<string, string> = Object.fromEntries(
+    keys.map((k) => [norm(k), k])
+  );
 
   // Prefer known x candidates first
   let xKey = undefined as string | undefined;
@@ -275,7 +281,10 @@ export function buildChartFromLatestTool(
 }
 
 /** Helper: find a case/format-insensitive match for a label among object keys */
-function findKeyByLabel(sample: Record<string, any>, label?: string): string | undefined {
+function findKeyByLabel(
+  sample: Record<string, any>,
+  label?: string
+): string | undefined {
   if (!label) return undefined;
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
   const target = norm(label);
@@ -291,7 +300,9 @@ function chartFromCommonChartJson(
   fallbackType: ChartType,
   fallbackTitle?: string
 ): ChartSpec | undefined {
-  const arr = Array.isArray(payload?.chart_data) ? payload.chart_data : undefined;
+  const arr = Array.isArray(payload?.chart_data)
+    ? payload.chart_data
+    : undefined;
   if (!arr || !arr.length || typeof arr[0] !== "object") return undefined;
 
   const sample = arr[0] as Record<string, any>;
@@ -302,7 +313,11 @@ function chartFromCommonChartJson(
 
   if (!xKey) {
     // Prefer known x candidates
-    xKey = X_PRIORITIES.find((k) => k in sample && (typeof sample[k] === "string" || typeof sample[k] === "number"));
+    xKey = X_PRIORITIES.find(
+      (k) =>
+        k in sample &&
+        (typeof sample[k] === "string" || typeof sample[k] === "number")
+    );
   }
   if (!xKey) {
     // Fallback to first non-numeric field
@@ -313,7 +328,9 @@ function chartFromCommonChartJson(
     // Try Y priorities with flexible matching, including keys with spaces
     const keys = Object.keys(sample);
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-    const keyByNorm: Record<string, string> = Object.fromEntries(keys.map((k) => [norm(k), k]));
+    const keyByNorm: Record<string, string> = Object.fromEntries(
+      keys.map((k) => [norm(k), k])
+    );
     for (const cand of Y_PRIORITIES) {
       const hit = keyByNorm[norm(cand)];
       if (hit && typeof sample[hit] === "number") {
@@ -324,13 +341,16 @@ function chartFromCommonChartJson(
   }
   if (!yKey) {
     // Fallback to first numeric field not equal to xKey
-    yKey = Object.keys(sample).find((k) => k !== xKey && typeof sample[k] === "number");
+    yKey = Object.keys(sample).find(
+      (k) => k !== xKey && typeof sample[k] === "number"
+    );
   }
 
   if (!xKey || !yKey) return undefined;
 
   // Sanitize keys for Recharts: avoid spaces/special chars in dataKey
-  const makeSafe = (k: string) => (/^[-_a-zA-Z0-9]+$/.test(k) ? k : (k === xKey ? "label" : "value"));
+  const makeSafe = (k: string) =>
+    /^[-_a-zA-Z0-9]+$/.test(k) ? k : k === xKey ? "label" : "value";
   const safeX = makeSafe(xKey);
   const safeY = makeSafe(yKey);
 
@@ -339,10 +359,20 @@ function chartFromCommonChartJson(
     [safeY]: typeof r[yKey!] === "number" ? r[yKey!] : Number(r[yKey!]) || 0,
   }));
 
-  const type = payload?.chart_type === "line" || payload?.chart_type === "bar" ? payload.chart_type : fallbackType;
+  const type =
+    payload?.chart_type === "line" || payload?.chart_type === "bar"
+      ? payload.chart_type
+      : fallbackType;
   const title = payload?.chart_title || fallbackTitle || "Results";
 
-  return { type: "chart", chart: type, title, xKey: safeX, yKey: safeY, data: rows };
+  return {
+    type: "chart",
+    chart: type,
+    title,
+    xKey: safeX,
+    yKey: safeY,
+    data: rows,
+  };
 }
 
 /** Build chart from the LLM final text answer if it embedded a chart JSON. */
