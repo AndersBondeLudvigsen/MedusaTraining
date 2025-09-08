@@ -150,26 +150,32 @@ export default class MedusaStoreService {
                         console.error(
                             `Fetching ${finalPath} with GET ${query.toString()}`
                         );
-                        const response = await this.sdk.client.fetch(finalPath, {
-                            method: method,
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Accept": "application/json",
-                                "Authorization": `Bearer ${process.env.PUBLISHABLE_KEY}`
-                            },
-                            query: query
-                        });
+                        const response = await this.sdk.client.fetch(
+                            finalPath,
+                            {
+                                method: method,
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "Accept": "application/json",
+                                    "Authorization": `Bearer ${process.env.PUBLISHABLE_KEY}`
+                                },
+                                query: query
+                            }
+                        );
                         return response;
                     } else {
-                        const response = await this.sdk.client.fetch(finalPath, {
-                            method: method,
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Accept": "application/json",
-                                "Authorization": `Bearer ${process.env.PUBLISHABLE_KEY}`
-                            },
-                            body
-                        });
+                        const response = await this.sdk.client.fetch(
+                            finalPath,
+                            {
+                                method: method,
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "Accept": "application/json",
+                                    "Authorization": `Bearer ${process.env.PUBLISHABLE_KEY}`
+                                },
+                                body
+                            }
+                        );
                         return response;
                     }
                 }

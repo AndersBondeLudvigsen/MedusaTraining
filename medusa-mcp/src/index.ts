@@ -12,7 +12,10 @@ async function main(): Promise<void> {
 
         tools = medusaAdminService.defineTools();
     } catch (error) {
-        console.error("Fatal Error: Could not initialize Medusa Admin Services:", error);
+        console.error(
+            "Fatal Error: Could not initialize Medusa Admin Services:",
+            error
+        );
         process.exit(1);
     }
 
