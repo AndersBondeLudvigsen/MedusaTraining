@@ -34,10 +34,7 @@ export async function planNextStepWithGemini(
 - Focus on retrieving data that can be visualized effectively in chart format`
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-  console.log(`🎯 PROMPT CONSTRUCTION (OPTIMIZED):`);
-  console.log(`   Category: ${category || "none (general)"}`);
-  console.log(`   Wants Chart: ${wantsChart}`);
-  console.log(`   Chart Type: ${wantsChart ? chartType : "n/a"}`);
+
 
   // Get category-specific prompt or use default
   const rolePrompt = category
@@ -71,12 +68,7 @@ export async function planNextStepWithGemini(
     `What should I do next? Respond with ONLY the JSON object.`,
   ].join("\n\n");
 
-  console.log(`📊 TOKEN OPTIMIZATION:`);
-  console.log(`   System message: ${systemMessage.length} chars (sent once)`);
-  console.log(
-    `   User message: ${userMessage.length} chars (changes each loop)`
-  );
-  console.log(`   History steps: ${history.length} previous actions`);
+
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 

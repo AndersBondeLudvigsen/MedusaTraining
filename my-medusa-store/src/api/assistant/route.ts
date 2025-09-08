@@ -28,29 +28,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       typeof body.chartTitle === "string" ? body.chartTitle : undefined;
     const category = typeof body.category === "string" ? body.category : null;
 
-    console.log(`\n🚀 ASSISTANT REQUEST RECEIVED:`);
-    console.log(
-      `   Prompt: "${prompt.substring(0, 50)}${
-        prompt.length > 50 ? "..." : ""
-      }"`
-    );
-    console.log(`   Category: ${category || "none"}`);
-    console.log(`   Wants Chart: ${wantsChart}`);
-    console.log(`   Chart Type: ${chartType}`);
-    console.log(`   Chart Title: ${chartTitle || "none"}`);
 
     const mcp = await getMcp();
 
-    // Get all available tools
     const tools = await mcp.listTools();
     let availableTools: McpTool[] = (tools.tools ?? []) as any;
 
-    console.log(`\n🔧 TOOL AVAILABILITY:`);
-    console.log(`   Total tools available: ${availableTools.length}`);
-    console.log(
-      `   Category guidance: ${category || "general"} (all tools accessible)`
-    );
-    // Note: Category only affects the AI prompt, not tool filtering
+
+
 
     const history: HistoryEntry[] = [];
     const maxSteps = 15;
