@@ -13,14 +13,29 @@ export function stripJsonFences(text: string): string {
 export function safeParseJSON(maybeJson: unknown): any | undefined {
   if (typeof maybeJson !== "string") return undefined;
   const stripped = stripJsonFences(maybeJson).trim();
-  const first = stripped.indexOf("{");
-  const last = stripped.lastIndexOf("}");
-  if (first === -1 || last === -1 || last < first) return undefined;
+  // Try direct parse first
   try {
-    return JSON.parse(stripped.slice(first, last + 1));
-  } catch {
-    return undefined;
+    return JSON.parse(stripped);
+  } catch {}
+
+  // Try object slice { ... }
+  const firstObj = stripped.indexOf("{");
+  const lastObj = stripped.lastIndexOf("}");
+  if (firstObj !== -1 && lastObj !== -1 && lastObj > firstObj) {
+    try {
+      return JSON.parse(stripped.slice(firstObj, lastObj + 1));
+    } catch {}
   }
+
+  // Try array slice [ ... ]
+  const firstArr = stripped.indexOf("[");
+  const lastArr = stripped.lastIndexOf("]");
+  if (firstArr !== -1 && lastArr !== -1 && lastArr > firstArr) {
+    try {
+      return JSON.parse(stripped.slice(firstArr, lastArr + 1));
+    } catch {}
+  }
+  return undefined;
 }
 
 // MCP result: { content: [{ type:"text", text: "...json..." }], isError? }
