@@ -1,6 +1,9 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
 import { getMcp } from "../../lib/mcp/manager";
 import { metricsStore, withToolLogging } from "../../lib/metrics/store";
+import {McpTool, HistoryEntry, ChartType, ChartSpec} from './../../types/assistant-type';
+
+
 
 // Category-specific prompts
 function getCategoryPrompt(category: string, wantsChart?: boolean): string {
@@ -69,29 +72,6 @@ If you need data from other categories (products, customers, orders) to complete
 }
 
 /* ---------------- Types ---------------- */
-
-type McpTool = {
-  name: string;
-  description?: string;
-  input_schema?: any;
-};
-
-type HistoryEntry = {
-  tool_name: string;
-  tool_args: any;
-  tool_result: any;
-};
-
-type ChartType = "bar" | "line";
-
-type ChartSpec = {
-  type: "chart";
-  chart: ChartType;
-  title: string;
-  xKey: string;
-  yKey: string;
-  data: Array<Record<string, string | number>>;
-};
 
 /* ---------------- Utils ---------------- */
 
