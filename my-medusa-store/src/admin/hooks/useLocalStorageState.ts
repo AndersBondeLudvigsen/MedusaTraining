@@ -8,7 +8,6 @@ const raw = localStorage.getItem(key);
 if (raw == null) return initial;
 return JSON.parse(raw) as T;
 } catch {
-// Non-JSON or invalid payloads fallback to string/initial
 try {
 return (localStorage.getItem(key) as unknown as T) ?? initial;
 } catch {

@@ -81,5 +81,5 @@ className={`rounded-md px-3 py-1.5 text-white ${canSubmit ? "bg-ui-bg-interactiv
 };
 
 
-export const config = defineRouteConfig({ label: "Promotions Assistant", icon: AiAssistent });
+export const config = defineRouteConfig({ label: "AI Assistant", icon: AiAssistent });
 export default AssistantPage;

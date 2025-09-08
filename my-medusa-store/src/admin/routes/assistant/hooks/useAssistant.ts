@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { useLocalStorageState } from "./useLocalStorageState";
+import { useLocalStorageState } from "../../../hooks/useLocalStorageState";
 import { STORAGE_KEYS } from "../lib/storageKeys";
 import { askAssistant } from "../lib/assistantApi";
 import type { Category } from "../types";
