@@ -160,7 +160,9 @@ export function createAnalyticsTools(
             aggregate: z.string().optional(),
 
             limit: z.number().int().min(1).max(50).default(5),
-            sort: z.union([z.literal("desc"), z.literal("asc")]).default("desc"),
+            sort: z
+                .union([z.literal("desc"), z.literal("asc")])
+                .default("desc"),
             order: z.string().optional(),
             order_by: z.string().optional()
         },
