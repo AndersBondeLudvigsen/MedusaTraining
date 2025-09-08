@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchMetrics } from "../lib/metricsApi";
 import type { MetricsSummary, ToolStats } from "../types";
-import { useLocalStorageState } from "./useLocalStorageState";
-
+import { useLocalStorageState } from "../../../../hooks/useLocalStorageState";
 
 const STORAGE_KEYS = {
 autoRefresh: "metrics:autoRefresh",
