@@ -11,31 +11,31 @@
 
 ### Quick Start
 
-
-# 1) Start infrastructure (Postgres + Redis) from the repo root
+```
+1) Start infrastructure (Postgres + Redis) from the repo root
 docker compose up -d
 
-# 2) Go to the backend directory
+2) Go to the backend directory
 cd my-medusa-store
 
-# 3) Install dependencies
+3) Install dependencies
 npm i
 
-# 4) Run database migrations (fixed typo: migrate, not migrabe)
+4) Run database migrations (fixed typo: migrate, not migrabe)
 npx medusa db:migrate
 
-# 5) Seed data (pick one approach)
-#   a) If you have a "seed" script in package.json:
+5) Seed data (pick one approach)
+   a) If you have a "seed" script in package.json:
 npm run seed
-#   b) Or use the Admin panel's "Seed Data" later.
+   b) Or use the Admin panel's "Seed Data" later.
 
-# 6) Create an admin user
+6) Create an admin user
 npx medusa user --email <yourchosenemail> --password <yourchosenpassword>
 
-# 7) Start the dev server
+7) Start the dev server
 npm run dev
 
-
+```
 
 * * * * *
 
