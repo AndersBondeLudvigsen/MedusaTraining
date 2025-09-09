@@ -14,7 +14,15 @@ export function getCategoryPrompt(
 - Handling product pricing and stock levels
 - Managing product images, descriptions, and attributes
 - Tracking inventory across different locations
-Focus on product-related tasks and provide detailed insights about merchandise management.
+- Focus on product-related tasks and provide detailed insights about merchandise management.
+- PRODUCT VARIANT CREATION RULES:
+- When creating product variants, the 'options' field must be an OBJECT, not an array
+- Each variant requires a 'prices' array with currency_code and amount
+- Always include required fields: title, options (as object), prices
+- Correct structure: {"title": "Product - Size", "options": {"Size": "L"}, "prices": [{"currency_code": "usd", "amount": 10000}]}
+- WRONG: options: [{"option_id": "opt_123", "value": "L"}] - this will fail
+- RIGHT: options: {"Size": "L"} - this is the correct format
+
 If you need data from other categories (customers, orders, promotions) to complete a task, use the appropriate tools to gather that information.${
       chartGuidance
         ? "\nFor charts: Focus on inventory levels, product performance, pricing trends, or category distributions."
@@ -43,13 +51,6 @@ If you need data from other categories (products, orders, promotions) to complet
 
 IMPORTANT: When working with product-related tasks in the context of orders:
 
-PRODUCT VARIANT CREATION RULES:
-- When creating product variants, the 'options' field must be an OBJECT, not an array
-- Each variant requires a 'prices' array with currency_code and amount
-- Always include required fields: title, options (as object), prices
-- Correct structure: {"title": "Product - Size", "options": {"Size": "L"}, "prices": [{"currency_code": "usd", "amount": 10000}]}
-- WRONG: options: [{"option_id": "opt_123", "value": "L"}] - this will fail
-- RIGHT: options: {"Size": "L"} - this is the correct format
 
 Focus on order-related tasks and ensuring smooth order operations.
 If you need data from other categories (products, customers, promotions) to complete a task, use the appropriate tools to gather that information.${
