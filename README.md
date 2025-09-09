@@ -12,7 +12,7 @@
 ### Quick Start
 
 ```
-# 1) Start infra (Postgres + Redis) from the repo root
+# 1) Start infrastructure (Postgres + Redis) from the repo root
 docker compose up -d
 
 # 2) Go to the backend directory
@@ -58,7 +58,7 @@ AUTH_CORS=http://localhost:5173,http://localhost:9000,http://localhost:8000,http
 # Redis
 REDIS_URL=redis://localhost:6379
 
-# Secrets (use strong random values in real projects)
+# Secrets (use strong random values if moving to production)
 JWT_SECRET=supersecret
 COOKIE_SECRET=supersecret
 
@@ -71,7 +71,7 @@ DB_NAME=medusa-v2
 GEMINI_API_KEY=
 PUBLISHABLE_KEY=
 
-# Backend + Admin credentials/tokens (used by your tools/scripts)
+# Backend + Admin credentials/tokens (used by tools/scripts)
 MEDUSA_BACKEND_URL=http://localhost:9000
 MEDUSA_USERNAME=
 MEDUSA_PASSWORD=
