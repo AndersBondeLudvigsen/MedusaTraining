@@ -88,6 +88,7 @@ ${
 }`,
   };
 
+
   return (
     prompts[category] ||
     `You are a general e-commerce platform assistant.${chartGuidance}`
