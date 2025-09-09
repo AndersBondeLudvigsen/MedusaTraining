@@ -11,7 +11,7 @@
 
 ### Quick Start
 
-```
+
 # 1) Start infrastructure (Postgres + Redis) from the repo root
 docker compose up -d
 
@@ -35,7 +35,7 @@ npx medusa user --email <yourchosenemail> --password <yourchosenpassword>
 # 7) Start the dev server
 npm run dev
 
-```
+
 
 * * * * *
 
