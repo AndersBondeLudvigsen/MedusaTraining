@@ -34,8 +34,6 @@ export async function planNextStepWithGemini(
 - Focus on retrieving data that can be visualized effectively in chart format`
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-
-
   // Get category-specific prompt or use default
   const rolePrompt = category
     ? getCategoryPrompt(category, wantsChart)
@@ -53,6 +51,14 @@ export async function planNextStepWithGemini(
     `1) If you need information or must perform an action, choose 'call_tool'.\n` +
     `2) If you have enough information, choose 'final_answer' and summarize succinctly.\n\n` +
     `${chartDirective}\n\n` +
+    `CRITICAL API RULES:\n` +
+    `- Always check tool schema carefully before making calls\n` +
+    `- If a tool call fails, analyze the error and adjust your approach\n` +
+    `ERROR RECOVERY STRATEGIES:\n` +
+    `- If product search by exact title fails, try partial keyword search\n` +
+    `- If variant creation fails with "options" error, ensure options is an object not array\n` +
+    `- If variant creation fails with "prices" error, include prices array in every variant\n` +
+    `- If JSON parsing fails, ensure your response is valid JSON without extra text\n\n` +
     `Always retrieve real data via the most relevant tool (Admin* list endpoints or custom tools).\n` +
     `Return a single JSON object ONLY, no commentary.\n\n` +
     `JSON to call a tool: {"action":"call_tool","tool_name":"string","tool_args":object}\n` +
@@ -67,8 +73,6 @@ export async function planNextStepWithGemini(
       : "No previous actions taken.",
     `What should I do next? Respond with ONLY the JSON object.`,
   ].join("\n\n");
-
-
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 
@@ -98,7 +102,16 @@ export async function planNextStepWithGemini(
   if (!text) throw new Error("LLM returned empty response");
   try {
     return JSON.parse(stripJsonFences(text).trim());
-  } catch {
-    throw new Error("Failed to parse LLM JSON response for the next action");
+  } catch (parseError) {
+    console.error("Failed to parse LLM response as JSON:");
+    console.error("Raw response:", text);
+    console.error("Cleaned response:", stripJsonFences(text).trim());
+    console.error("Parse error:", parseError);
+    throw new Error(
+      `Failed to parse LLM JSON response for the next action. Raw response: ${text.substring(
+        0,
+        200
+      )}...`
+    );
   }
 }
