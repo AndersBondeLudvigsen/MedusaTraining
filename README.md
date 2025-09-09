@@ -46,32 +46,39 @@ Create **two** `.env` files: one in `my-medusa-store` and one in `medusa-mcp`.
 #### `.env` for `my-medusa-store` (backend)
 
 ```
-# Onboarding
+Onboarding
+
 MEDUSA_ADMIN_ONBOARDING_TYPE=nextjs
 MEDUSA_ADMIN_ONBOARDING_NEXTJS_DIRECTORY=my-medusa-store-storefront
 
-# CORS
+CORS
+
 STORE_CORS=http://localhost:8000,https://docs.medusajs.com
 ADMIN_CORS=http://localhost:5173,http://localhost:9000,https://docs.medusajs.com
 AUTH_CORS=http://localhost:5173,http://localhost:9000,http://localhost:8000,https://docs.medusajs.com
 
-# Redis
+Redis
+
 REDIS_URL=redis://localhost:6379
 
-# Secrets (use strong random values if moving to production)
+Secrets (use strong random values if moving to production)
+
 JWT_SECRET=supersecret
 COOKIE_SECRET=supersecret
 
-# Database
-# DATABASE_URL=postgres://postgres:postgres@localhost:5432/medusa
+Database
+Example: DATABASE_URL=postgres://postgres:postgres@localhost:5432/medusa
+
 DATABASE_URL=
 DB_NAME=medusa-v2
 
-# Integrations / keys (fill as needed)
+Integrations / keys (fill as needed)
+
 GEMINI_API_KEY=
 PUBLISHABLE_KEY=
 
-# Backend + Admin credentials/tokens (used by tools/scripts)
+Backend + Admin credentials/tokens (used by tools/scripts)
+
 MEDUSA_BACKEND_URL=http://localhost:9000
 MEDUSA_USERNAME=
 MEDUSA_PASSWORD=
