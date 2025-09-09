@@ -5,7 +5,7 @@ type AnalyticsService = {
     salesAggregate: (params: {
         start: string;
         end: string;
-        group_by: "product" | "variant";
+        group_by: "product" | "variant" | "shipping";
         metric: "quantity" | "revenue" | "orders";
         limit?: number;
         sort?: "asc" | "desc";
@@ -15,6 +15,8 @@ type AnalyticsService = {
             variant_id: string | null;
             sku: string | null;
             title: string | null;
+            shipping_method_id?: string | null;
+            shipping_option_id?: string | null;
             quantity: number;
             revenue: number;
             orders: number;
@@ -43,7 +45,7 @@ export function createAnalyticsTools(
 
     const coerceGroupBy = (
         input: Record<string, unknown>
-    ): "product" | "variant" | undefined => {
+    ): "product" | "variant" | "shipping" | undefined => {
         const raw =
             (input.group_by as string | undefined) ||
             (input.grouping as string | undefined) ||
@@ -58,6 +60,15 @@ export function createAnalyticsTools(
         }
         if (v.startsWith("variant")) {
             return "variant";
+        }
+        if (
+            v.startsWith("shipping") ||
+            v.startsWith("shipping_method") ||
+            v.startsWith("shipping-method") ||
+            v.startsWith("shipping option") ||
+            v.startsWith("shipping_option")
+        ) {
+            return "shipping";
         }
         return undefined;
     };
@@ -138,7 +149,7 @@ export function createAnalyticsTools(
     const sales_aggregate = defineTool((z) => ({
         name: "sales_aggregate",
         description:
-            "Aggregate sales in a UTC date range with grouping and metric. Metric accepts: quantity (qty/units), revenue (sales/amount/total/sum), orders (count). Returns actable IDs.",
+            "Aggregate sales in a UTC date range with grouping and metric. Group by: product, variant, or shipping (method). Metric accepts: quantity (qty/units), revenue (sales/amount/total/sum), orders (count).",
         inputSchema: {
             start: z.string().datetime().optional(),
             end: z.string().datetime().optional(),
@@ -178,7 +189,7 @@ export function createAnalyticsTools(
             const metric = coerceMetric(input);
             if (!group_by) {
                 throw new Error(
-                    "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'."
+                    "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product', 'variant', or 'shipping' (method)."
                 );
             }
             if (!metric) {
@@ -215,7 +226,11 @@ export function createAnalyticsTools(
             const schema = z.object({
                 start: z.string().datetime(),
                 end: z.string().datetime(),
-                group_by: z.union([z.literal("product"), z.literal("variant")]),
+                group_by: z.union([
+                    z.literal("product"),
+                    z.literal("variant"),
+                    z.literal("shipping")
+                ]),
                 metric: z.union([
                     z.literal("quantity"),
                     z.literal("revenue"),
@@ -245,6 +260,10 @@ export function createAnalyticsTools(
                 sort: parsed.data.sort
             });
 
+            const titleGroup =
+                parsed.data.group_by === "shipping"
+                    ? "shipping methods"
+                    : `${parsed.data.group_by}s`;
             return {
                 start: parsed.data.start,
                 end: parsed.data.end,
@@ -253,7 +272,7 @@ export function createAnalyticsTools(
                 results: rows,
                 xKey: "rank",
                 yKey: "value",
-                title: `Top ${parsed.data.group_by}s by ${parsed.data.metric}`
+                title: `Top ${titleGroup} by ${parsed.data.metric}`
             };
         }
     }));

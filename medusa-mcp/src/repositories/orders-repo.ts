@@ -34,7 +34,8 @@ export function createOrdersRepo(http: Http): {
                         id: o.id,
                         created_at: o.created_at,
                         canceled_at: o.canceled_at,
-                        items: o.items
+                        items: o.items,
+                        shipping_methods: (o as any).shipping_methods
                     });
                 }
             }
@@ -53,11 +54,8 @@ export function createOrdersRepo(http: Http): {
         const list = await listInRange(fromIso, toIso);
         const detailed = await Promise.all(
             list.map(async (o) => {
-                if (Array.isArray(o.items) && o.items.length) {
-                    return o;
-                }
                 if (!o.id) {
-                    return { ...o, items: [] } as AdminOrderMinimal;
+                    return { ...o, items: [], shipping_methods: [] } as AdminOrderMinimal;
                 }
                 try {
                     const detail = await http.get<{
@@ -65,10 +63,16 @@ export function createOrdersRepo(http: Http): {
                     }>(`/admin/orders/${encodeURIComponent(o.id)}`);
                     return {
                         ...o,
-                        items: detail?.order?.items ?? []
+                        items: detail?.order?.items ?? o.items ?? [],
+                        shipping_methods:
+                            detail?.order?.shipping_methods ?? o.shipping_methods ?? []
                     } as AdminOrderMinimal;
                 } catch {
-                    return { ...o, items: [] } as AdminOrderMinimal;
+                    return {
+                        ...o,
+                        items: o.items ?? [],
+                        shipping_methods: o.shipping_methods ?? []
+                    } as AdminOrderMinimal;
                 }
             })
         );
