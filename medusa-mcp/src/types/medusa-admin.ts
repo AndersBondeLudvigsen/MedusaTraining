@@ -14,7 +14,7 @@ export type AdminOrderItemMaybe = {
     title?: string | null;
     sku?: string | null;
     variant_id?: string | null;
-    product_id?: string | null; // some setups include this
+    product_id?: string | null;
     variant?: AdminVariantMaybe | null; // when expanded/detail
 };
 

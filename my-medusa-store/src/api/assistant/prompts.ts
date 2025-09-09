@@ -49,9 +49,8 @@ If you need data from other categories (products, orders, promotions) to complet
 - Resolving order issues and claims
 - Optimizing order processing workflows
 
+If needing to answer questions about amount of orders use the orders_count tool
 IMPORTANT: When working with product-related tasks in the context of orders:
-
-
 Focus on order-related tasks and ensuring smooth order operations.
 If you need data from other categories (products, customers, promotions) to complete a task, use the appropriate tools to gather that information.${
       chartGuidance
