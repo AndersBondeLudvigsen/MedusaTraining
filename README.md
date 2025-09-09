@@ -108,11 +108,9 @@ Paste those values into the respective `.env` files above.
 
 -   **Admin:** `http://localhost:9000/app`
 
--   **Storefront (examples):**
+-   **Storefront :**
 
-    -   `http://localhost:5173` (if your Next.js/Vite app runs there)
-
-    -   `http://localhost:8000` (if you use a different local frontend)
+    -   `http://localhost:8000` 
 
 Ensure your frontend origin(s) are included in `STORE_CORS`, `ADMIN_CORS`, and `AUTH_CORS`.
 
@@ -124,52 +122,5 @@ If you need more mock data in PostgreSQL:
 
 -   Use **Seed Data** from the Admin sidebar; **or**
 
--   Run your seeding script (e.g. `npm run seed`) if defined in `package.json`.
+-   Run our seeding script (e.g. `npm run seed`, `npm run fulfillAllOrders`) defined in `package.json`.
 
-* * * * *
-
-### Feedback / Fixes & Suggestions
-
--   **Typos fixed**
-
-    -   `npx medusa db:migrabe` → `npx medusa db:migrate`.
-
--   **Seeding command**
-
-    -   You wrote `npm seed`; it's usually `npm run seed` (provided you have a `"seed"` script in `package.json`). Otherwise, use the Admin's **Seed Data**.
-
--   **Database configuration**
-
-    -   You listed both `DATABASE_URL` and `DB_NAME`. Typically you'll use **one** approach:
-
-        -   **Preferred:** `DATABASE_URL=postgres://USER:PASS@HOST:PORT/DBNAME`
-
-        -   **Alternative:** rely on your setup's `DB_NAME`. If `DATABASE_URL` is present, `DB_NAME` is often ignored.
-
--   **Set `MEDUSA_BACKEND_URL` locally**
-
-    -   In both `.env` files, set `MEDUSA_BACKEND_URL=http://localhost:9000` so your tools (like `medusa-mcp`) can hit the backend.
-
--   **Strong secrets**
-
-    -   Replace `supersecret` with strong random strings for `JWT_SECRET` and `COOKIE_SECRET`.
-
--   **CORS check**
-
-    -   Your CORS lists include `http://localhost:5173`, `http://localhost:9000`, and `http://localhost:8000`. Make sure these match the actual ports your Admin and frontend(s) use.
-
--   **Docker assumptions**
-
-    -   This guide assumes your `docker compose` brings up **Postgres** and **Redis** accessible at `localhost:5432` and `localhost:6379`. If your compose uses different ports or container names, update `DATABASE_URL` and `REDIS_URL` accordingly.
-
--   **Keys naming consistency**
-
-    -   You used `PUBLISHABLE_KEY` and `MEDUSA_ADMIN_API_KEY`. Double-check your MCP service expects those exact variable names. Some setups use slightly different env names.
-
--   **Admin user step is in the backend dir**
-
-    -   Run `npx medusa user ...` inside `my-medusa-store` (where Medusa is configured).
-
--   **Optional extras**
-
-    -   Consider adding `PORT=9000` and `NODE_ENV=development` to the backend `.env` for clarity (if your project uses them).
