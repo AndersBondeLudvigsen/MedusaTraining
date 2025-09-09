@@ -67,7 +67,10 @@ If you need data from other categories (products, customers, promotions) to comp
 When creating or updating a promotion, you MUST adhere to the following JSON structure. This is critical for the UI to display correctly.
 The attribute for customer groups MUST be \`customer.groups.id\`
 The attribute for products MUST be \`"items.product.id"\`
-
+the attributes for campaign must be:
+id:
+name:
+campaign_identifier:
 ## Interactive Campaign Setup and Rule Definition
 When you see that a promotion has no rules, proactively guide the user to define them.
 
