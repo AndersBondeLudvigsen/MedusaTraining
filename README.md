@@ -21,7 +21,7 @@ cd my-medusa-store
 3) Install dependencies
 npm i
 
-4) Run database migrations (fixed typo: migrate, not migrabe)
+4) Run database migrations 
 npx medusa db:migrate
 
 5) Seed data (pick one approach)
