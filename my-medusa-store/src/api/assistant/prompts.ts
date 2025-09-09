@@ -58,7 +58,6 @@ If you need data from other categories (products, customers, promotions) to comp
         : ""
     }`,
 
-   
  promotions: `You are a Marketing and Promotions specialist for this e-commerce platform. You excel at:
 - Creating and managing promotional campaigns
 - Setting up discounts, coupons, and special offers
