@@ -14,7 +14,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       wantsChart?: boolean;
       chartType?: ChartType;
       chartTitle?: string;
-      category?: string; // New category filter
     };
 
     const prompt = body.prompt?.trim();
@@ -26,8 +25,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const chartType: ChartType = body.chartType === "line" ? "line" : "bar";
     const chartTitle =
       typeof body.chartTitle === "string" ? body.chartTitle : undefined;
-    const category = typeof body.category === "string" ? body.category : null;
-
 
     const mcp = await getMcp();
 
@@ -51,13 +48,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         history,
         "gemini-2.5-flash",
         wantsChart,
-        category || undefined,
         chartType
       );
 
       if (plan.action === "final_answer") {
-        console.log("✅ AI decided to provide the final answer.");
-
         // 🔸 END turn with final message
         metricsStore.endAssistantTurn(turnId, plan.answer ?? "");
 

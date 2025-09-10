@@ -32,6 +32,9 @@ export function createAnalyticsService(
             revenue: number;
             orders: number;
             value: number;
+            // new optional IDs when grouping by shipping:
+            shipping_option_id?: string | null;
+            shipping_method_id?: string | null;
         }>
     >;
 } {
@@ -57,6 +60,7 @@ export function createAnalyticsService(
             sort = "desc"
         } = params;
         const list = await orders.withItems(start, end);
+
 
         // Product/Variant aggregation
         const agg = new Map<
@@ -183,33 +187,128 @@ export function createAnalyticsService(
                     (it as any).sku ??= resolved.sku;
                 }
 
-                const sku = (it as any).sku ?? it?.variant?.sku ?? null;
-                const title =
-                    (it as any).title ??
-                    it?.variant?.title ??
-                    it?.variant?.product?.title ??
-                    null;
+                        const row = agg.get(key) ?? {
+                            quantity: 0,
+                            revenue: 0,
+                            orders: new Set<string>()
+                        };
+                        row.quantity += 1; // count shipments
+                        // prefer total, then amount
+                        const amt =
+                            typeof (m as any).total === "number"
+                                ? (m as any).total
+                                : toNum((m as any).amount);
+                        row.revenue += amt;
+                        if (oid) {
+                            row.orders.add(oid);
+                        }
+                        row.title ??= name ?? optionId ?? methodId ?? null;
+                        row.shipping_option_id ??= optionId;
+                        row.shipping_method_id ??= methodId;
+                        // keep product/variant/sku nulls for this grouping
+                        row.product_id ??= undefined;
+                        row.variant_id ??= undefined;
+                        row.sku ??= null;
 
-                const key = group_by === "variant" ? variant_id : product_id;
-                if (!key) {
-                    continue;
-                }
+                        agg.set(key, row);
+                    }
+                } else {
+                    // Fallback: derive from fulfillments if no shipping_methods present
+                    const fulf = o.fulfillments ?? [];
+                    for (const f of fulf) {
+                        const optionId =
+                            (f as any).shipping_option_id ??
+                            (f as any).shipping_option?.id ??
+                            null;
+                        if (!optionId) {
+                            continue;
+                        }
 
-                const row = agg.get(key) ?? {
-                    quantity: 0,
-                    revenue: 0,
-                    orders: new Set<string>()
-                };
-                row.quantity += qty;
-                row.revenue += price;
-                if (oid) {
-                    row.orders.add(oid);
+                        const key = optionId;
+                        const row = agg.get(key) ?? {
+                            quantity: 0,
+                            revenue: 0, // no amount info here
+                            orders: new Set<string>()
+                        };
+                        row.quantity += 1;
+                        if (oid) {
+                            row.orders.add(oid);
+                        }
+                        // Try to produce a readable title
+                        const provider =
+                            (f as any).provider_id ??
+                            (f as any).provider?.id ??
+                            null;
+                        row.title ??= provider ?? optionId;
+                        row.shipping_option_id ??= optionId;
+                        row.shipping_method_id ??= null;
+                        row.product_id ??= undefined;
+                        row.variant_id ??= undefined;
+                        row.sku ??= null;
+
+                        agg.set(key, row);
+                    }
                 }
-                row.product_id ??= product_id;
-                row.variant_id ??= variant_id;
-                row.sku ??= sku;
-                row.title ??= title;
-                agg.set(key, row);
+            }
+        } else {
+            // ----- EXISTING PRODUCT/VARIANT GROUPING -----
+            for (const o of list) {
+                const oid = o.id ?? "";
+                for (const it of o.items ?? []) {
+                    const qty = toNum(it.quantity);
+                    if (qty <= 0) {
+                        continue;
+                    }
+
+                    const price =
+                        typeof it.total === "number"
+                            ? it.total
+                            : toNum(it.unit_price) * qty;
+
+                    const variant_id =
+                        (it as any).variant_id ?? it?.variant?.id ?? undefined;
+                    let product_id =
+                        (it as any).product_id ??
+                        it?.variant?.product_id ??
+                        it?.variant?.product?.id ??
+                        undefined;
+
+                    if (group_by === "product" && !product_id && variant_id) {
+                        const resolved = await variants.resolve(variant_id);
+                        product_id = resolved.product_id ?? product_id;
+                        (it as any).title ??= resolved.title;
+                        (it as any).sku ??= resolved.sku;
+                    }
+
+                    const sku = (it as any).sku ?? it?.variant?.sku ?? null;
+                    const title =
+                        (it as any).title ??
+                        it?.variant?.title ??
+                        it?.variant?.product?.title ??
+                        null;
+
+                    const key =
+                        group_by === "variant" ? variant_id : product_id;
+                    if (!key) {
+                        continue;
+                    }
+
+                    const row = agg.get(key) ?? {
+                        quantity: 0,
+                        revenue: 0,
+                        orders: new Set<string>()
+                    };
+                    row.quantity += qty;
+                    row.revenue += price;
+                    if (oid) {
+                        row.orders.add(oid);
+                    }
+                    row.product_id ??= product_id;
+                    row.variant_id ??= variant_id;
+                    row.sku ??= sku;
+                    row.title ??= title;
+                    agg.set(key, row);
+                }
             }
         }
 
@@ -228,7 +327,10 @@ export function createAnalyticsService(
                     ? r.quantity
                     : metric === "revenue"
                     ? r.revenue
-                    : r.orders.size
+                    : r.orders.size,
+            // ship-specific ids (undefined unless grouped by shipping)
+            shipping_option_id: r.shipping_option_id ?? null,
+            shipping_method_id: r.shipping_method_id ?? null
         }));
 
         rows.sort((a, b) =>

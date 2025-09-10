@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from "react";
 import { useLocalStorageState } from "../../../hooks/useLocalStorageState";
 import { STORAGE_KEYS } from "../lib/storageKeys";
 import { askAssistant } from "../lib/assistantApi";
-import type { Category } from "../types";
 import type { ChartSpec } from "../ChartRenderer";
 
 
@@ -12,7 +11,6 @@ const [prompt, setPrompt] = useLocalStorageState<string>(STORAGE_KEYS.prompt, ""
 const [wantsChart, setWantsChart] = useLocalStorageState<boolean>(STORAGE_KEYS.wantsChart, false);
 const [chartType, setChartType] = useLocalStorageState<"bar" | "line">(STORAGE_KEYS.chartType, "bar");
 const [chartTitle, setChartTitle] = useLocalStorageState<string>(STORAGE_KEYS.chartTitle, "");
-const [category, setCategory] = useLocalStorageState<Category>(STORAGE_KEYS.category, "");
 
 
 // derived/ephemeral state
@@ -38,7 +36,6 @@ const payload = {
 prompt,
 wantsChart,
 chartType,
-category,
 ...(chartTitle.trim() ? { chartTitle: chartTitle.trim() } : {}),
 } as const;
 
@@ -51,7 +48,7 @@ setError(e?.message ?? "Unknown error");
 } finally {
 setLoading(false);
 }
-}, [canSubmit, prompt, wantsChart, chartType, category, chartTitle]);
+}, [canSubmit, prompt, wantsChart, chartType, chartTitle]);
 
 
 const clear = useCallback(() => {
@@ -68,7 +65,6 @@ prompt, setPrompt,
 wantsChart, setWantsChart,
 chartType, setChartType,
 chartTitle, setChartTitle,
-category, setCategory,
 
 
 answer, chart, loading, error,

@@ -15,7 +15,6 @@ export type AskPayload = {
 prompt: string;
 wantsChart: boolean;
 chartType: "bar" | "line";
-category: string;
 chartTitle?: string;
 };
 

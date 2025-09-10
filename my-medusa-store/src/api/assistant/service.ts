@@ -1,6 +1,6 @@
 import { McpTool, ChartType } from "./types";
 import { env, stripJsonFences } from "./utils";
-import { getCategoryPrompt } from "./prompts";
+import { getCombinedPrompt } from "./prompts";
 
 export async function planNextStepWithGemini(
   userPrompt: string,
@@ -8,7 +8,6 @@ export async function planNextStepWithGemini(
   history: { tool_name: string; tool_args: any; tool_result: any }[],
   modelName: string = "gemini-2.5-flash",
   wantsChart: boolean = false,
-  category?: string,
   chartType: ChartType = "bar"
 ): Promise<{
   action: "call_tool" | "final_answer";
@@ -34,18 +33,12 @@ export async function planNextStepWithGemini(
 - Focus on retrieving data that can be visualized effectively in chart format`
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-  // Get category-specific prompt or use default
-  const rolePrompt = category
-    ? getCategoryPrompt(category, wantsChart)
-    : `You are a general e-commerce platform assistant for managing backend operations.${
-        wantsChart
-          ? "\nWhen providing data for charts, focus on quantitative metrics that can be visualized effectively."
-          : ""
-      }`;
+  // Get the combined prompt for all specializations
+  const Prompt = getCombinedPrompt(wantsChart);
 
   // STATIC CONTENT (sent once as system message)
   const systemMessage =
-    `${rolePrompt}\n\n` +
+    `${Prompt}\n\n` +
     `Decide the next step based on the user's goal and the tool-call history.\n` +
     `Actions: 'call_tool' or 'final_answer'.\n\n` +
     `1) If you need information or must perform an action, choose 'call_tool'.\n` +
