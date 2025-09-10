@@ -89,12 +89,17 @@ export function createAnalyticsService(
                     ? (o as any).shipping_methods
                     : [];
                 for (const sm of methods) {
-                    // Prefer grouping by shipping_option_id if available, else shipping method id, else name
+                    // Prefer grouping by shipping_option_id if available, else by a stable name, else by method id
+                    const smName: string | null =
+                        (sm as any).name ??
+                        (sm as any).detail?.name ??
+                        (sm as any).detail?.label ??
+                        (sm as any).shipping_option?.name ??
+                        null;
                     const key =
-                        (sm as any).shipping_option_id || (sm as any).id || (sm as any).name;
+                        (sm as any).shipping_option_id || smName || (sm as any).id;
                     if (!key) continue;
-                    const name: string | null =
-                        (sm as any).name ?? (sm as any).shipping_option?.name ?? null;
+                    const name: string | null = smName;
                     const shipping_method_id: string | null = (sm as any).id ?? null;
                     const shipping_option_id: string | null =
                         (sm as any).shipping_option_id ?? (sm as any).shipping_option?.id ?? null;
