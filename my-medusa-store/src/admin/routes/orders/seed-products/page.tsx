@@ -42,6 +42,18 @@ const SeedProductsPage = () => {
           <Button size="small" disabled={loading} onClick={() => runSeed("seed-data")}>Seed products (light)</Button>
           <Button size="small" variant="secondary" disabled={loading} onClick={() => runSeed("seed-orders")}>Seed orders</Button>
           <Button size="small" variant="secondary" disabled={loading} onClick={() => runSeed("seed-customers")}>Seed customers</Button>
+          <Button
+            size="small"
+            variant="secondary"
+            disabled={loading}
+            onClick={() => {
+              if (confirm("This will delete ALL orders, draft orders, and carts. This cannot be undone. Continue?")) {
+                runSeed("nuke-orders")
+              }
+            }}
+          >
+            Delete orders
+          </Button>
         </div>
         {message && <Text className="text-green-600">{message}</Text>}
         {error && <Text className="text-ui-fg-error">{error}</Text>}

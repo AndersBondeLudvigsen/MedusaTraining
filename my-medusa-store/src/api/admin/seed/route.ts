@@ -33,6 +33,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     "seed-orders",
     "seed-customers",
     "seed-customer-groups",
+    "nuke-orders",
   ])
 
   if (!allowed.has(script)) {
@@ -52,7 +53,25 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     }
 
     logger.info(`Running seed script: ${script}`)
-    const result = await run({ container: req.scope })
+
+    // Temporarily set confirmation env for destructive script
+    const prevNuke = process.env.NUKE_ORDERS
+    if (script === "nuke-orders") {
+      process.env.NUKE_ORDERS = "1"
+    }
+
+    let result: any
+    try {
+      result = await run({ container: req.scope })
+    } finally {
+      if (script === "nuke-orders") {
+        if (prevNuke === undefined) {
+          delete process.env.NUKE_ORDERS
+        } else {
+          process.env.NUKE_ORDERS = prevNuke
+        }
+      }
+    }
 
     return res.status(200).json({ message: `Seed '${script}' finished`, result })
   } catch (e: any) {
