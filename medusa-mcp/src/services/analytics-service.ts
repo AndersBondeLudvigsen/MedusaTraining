@@ -239,3 +239,5 @@ export function createAnalyticsService(
 
     return { ordersCount, salesAggregate };
 }
+
+
