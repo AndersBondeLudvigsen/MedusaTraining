@@ -18,33 +18,25 @@ export type AdminOrderItemMaybe = {
     variant?: AdminVariantMaybe | null; // when expanded/detail
 };
 
-/** Minimal fields we read from order.shipping_methods[] */
+
 export type AdminShippingMethodMaybe = {
     id?: string;
     name?: string | null;
-    amount?: number | null; // per your JSON
-    total?: number | null; // also present, we prefer total when available
+    amount?: number;
+    total?: number;
+    subtotal?: number;
     shipping_option_id?: string | null;
-};
+    shipping_option?: { id?: string; name?: string | null } | null;
 
-/** Minimal fields we read from order.fulfillments[] */
-export type AdminFulfillmentMaybe = {
-    id?: string;
-    provider_id?: string | null; // e.g. "manual_manual"
-    provider?: { id?: string } | null;
-    shipping_option_id?: string | null;
-    shipping_option?: { id?: string } | null;
 };
 
 export type AdminOrderMinimal = {
     id?: string;
     created_at?: string;
     canceled_at?: string | null;
-    items?: AdminOrderItemMaybe[]; // present on detail; sometimes on list
 
-    // NEW: make these optional so widening is backwards-safe
-    shipping_methods?: AdminShippingMethodMaybe[]; // from order.shipping_methods
-    fulfillments?: AdminFulfillmentMaybe[]; // from order.fulfillments
+    items?: AdminOrderItemMaybe[]; // present on detail; sometimes on list depending on setup
+    shipping_methods?: AdminShippingMethodMaybe[]; // present on detail
 };
 
 export type VariantResolution = {
