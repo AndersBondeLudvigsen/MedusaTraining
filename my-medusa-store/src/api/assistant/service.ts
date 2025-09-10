@@ -1,6 +1,6 @@
 import { McpTool, ChartType } from "./types";
 import { env, stripJsonFences } from "./utils";
-import { getCategoryPrompt } from "./prompts";
+import { getCombinedPrompt } from "./prompts";
 
 export async function planNextStepWithGemini(
   userPrompt: string,
@@ -8,7 +8,6 @@ export async function planNextStepWithGemini(
   history: { tool_name: string; tool_args: any; tool_result: any }[],
   modelName: string = "gemini-2.5-flash",
   wantsChart: boolean = false,
-  category?: string,
   chartType: ChartType = "bar"
 ): Promise<{
   action: "call_tool" | "final_answer";
@@ -34,14 +33,13 @@ export async function planNextStepWithGemini(
 - Focus on retrieving data that can be visualized effectively in chart format`
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
-  // Get category-specific prompt or use default
-  const rolePrompt = category
-    ? getCategoryPrompt(category, wantsChart)
-    : `You are a general e-commerce platform assistant for managing backend operations.${
-        wantsChart
-          ? "\nWhen providing data for charts, focus on quantitative metrics that can be visualized effectively."
-          : ""
-      }`;
+  // Get the combined prompt for all specializations
+  const rolePrompt = getCombinedPrompt(wantsChart);
+
+  console.log("🤖 COMBINED PROMPT BEING SENT TO AI:");
+  console.log("=====================================");
+  console.log(rolePrompt);
+  console.log("=====================================");
 
   // STATIC CONTENT (sent once as system message)
   const systemMessage =
@@ -73,6 +71,11 @@ export async function planNextStepWithGemini(
       : "No previous actions taken.",
     `What should I do next? Respond with ONLY the JSON object.`,
   ].join("\n\n");
+
+  console.log("📝 USER MESSAGE BEING SENT TO AI:");
+  console.log("===================================");
+  console.log(userMessage);
+  console.log("===================================");
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 

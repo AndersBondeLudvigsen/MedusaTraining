@@ -14,7 +14,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       wantsChart?: boolean;
       chartType?: ChartType;
       chartTitle?: string;
-      category?: string; // New category filter
     };
 
     const prompt = body.prompt?.trim();
@@ -26,7 +25,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const chartType: ChartType = body.chartType === "line" ? "line" : "bar";
     const chartTitle =
       typeof body.chartTitle === "string" ? body.chartTitle : undefined;
-    const category = typeof body.category === "string" ? body.category : null;
+
+    console.log("🚀 ASSISTANT REQUEST RECEIVED:");
+    console.log("===============================");
+    console.log("User prompt:", prompt);
+    console.log("Wants chart:", wantsChart);
+    console.log("Chart type:", chartType);
+    console.log("Chart title:", chartTitle || "N/A");
+    console.log("===============================");
 
 
     const mcp = await getMcp();
@@ -51,7 +57,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         history,
         "gemini-2.5-flash",
         wantsChart,
-        category || undefined,
         chartType
       );
 
