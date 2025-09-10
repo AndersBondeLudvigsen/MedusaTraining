@@ -16,7 +16,14 @@ export function createOrdersRepo(http: Http): {
         const limit = 200;
         let offset = 0;
         const acc: AdminOrderMinimal[] = [];
-        const base = { created_at: { gte: fromIso, lt: toIso } } as const;
+        const base = {
+            created_at: { gte: fromIso, lt: toIso },
+            // Ensure we include items and shipping_methods on the list payload
+            // so downstream aggregations don't rely on per-order detail calls.
+            // Using +field syntax to add to default response fields.
+            fields:
+                "+id,+created_at,+canceled_at,+items,+shipping_methods"
+        } as const;
         // paginate
         while (true) {
             const q = { ...base, limit, offset } as Record<string, unknown>;
@@ -34,6 +41,7 @@ export function createOrdersRepo(http: Http): {
                         id: o.id,
                         created_at: o.created_at,
                         canceled_at: o.canceled_at,
+                        // Some setups return minimal items on list; still pass through whatever we got.
                         items: o.items,
                         shipping_methods: (o as any).shipping_methods
                     });
@@ -54,9 +62,20 @@ export function createOrdersRepo(http: Http): {
         const list = await listInRange(fromIso, toIso);
         const detailed = await Promise.all(
             list.map(async (o) => {
+                // If we already have both items and shipping methods on the list payload,
+                // avoid fetching the order detail again.
+                const hasItems = Array.isArray((o as any).items) && (o as any).items.length > 0;
+                const hasShipping =
+                    Array.isArray((o as any).shipping_methods) &&
+                    (o as any).shipping_methods.length > 0;
+
                 if (!o.id) {
                     return { ...o, items: [], shipping_methods: [] } as AdminOrderMinimal;
                 }
+                if (hasItems && hasShipping) {
+                    return o;
+                }
+
                 try {
                     const detail = await http.get<{
                         order?: AdminOrderMinimal;
