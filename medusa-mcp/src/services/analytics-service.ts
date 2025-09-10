@@ -16,7 +16,7 @@ export function createAnalyticsService(
     salesAggregate: (params: {
         start: string;
         end: string;
-        group_by: "product" | "variant";
+        group_by: "product" | "variant" | "shipping";
         metric: "quantity" | "revenue" | "orders";
         limit?: number;
         sort?: "asc" | "desc";
@@ -26,6 +26,8 @@ export function createAnalyticsService(
             variant_id: string | null;
             sku: string | null;
             title: string | null;
+            shipping_method_id?: string | null;
+            shipping_option_id?: string | null;
             quantity: number;
             revenue: number;
             orders: number;
@@ -41,7 +43,7 @@ export function createAnalyticsService(
     async function salesAggregate(params: {
         start: string;
         end: string;
-        group_by: "product" | "variant";
+        group_by: "product" | "variant" | "shipping";
         metric: "quantity" | "revenue" | "orders";
         limit?: number;
         sort?: "asc" | "desc";
@@ -56,6 +58,7 @@ export function createAnalyticsService(
         } = params;
         const list = await orders.withItems(start, end);
 
+        // Product/Variant aggregation
         const agg = new Map<
             string,
             {
@@ -68,6 +71,90 @@ export function createAnalyticsService(
                 orders: Set<string>;
             }
         >();
+
+        if (group_by === "shipping") {
+            const shipAgg = new Map<
+                string,
+                {
+                    shipping_method_id?: string | null;
+                    shipping_option_id?: string | null;
+                    title?: string | null;
+                    revenue: number;
+                    orders: Set<string>;
+                }
+            >();
+            for (const o of list) {
+                const oid = o.id ?? "";
+                const methods = Array.isArray((o as any).shipping_methods)
+                    ? (o as any).shipping_methods
+                    : [];
+                for (const sm of methods) {
+                    // Prefer grouping by shipping_option_id if available, else by a stable name, else by method id
+                    const smName: string | null =
+                        (sm as any).name ??
+                        (sm as any).detail?.name ??
+                        (sm as any).detail?.label ??
+                        (sm as any).shipping_option?.name ??
+                        null;
+                    const key =
+                        (sm as any).shipping_option_id ||
+                        smName ||
+                        (sm as any).id;
+                    if (!key) {
+                        continue;
+                    }
+                    const name: string | null = smName;
+                    const shipping_method_id: string | null =
+                        (sm as any).id ?? null;
+                    const shipping_option_id: string | null =
+                        (sm as any).shipping_option_id ??
+                        (sm as any).shipping_option?.id ??
+                        null;
+                    const amount =
+                        typeof (sm as any).total === "number"
+                            ? (sm as any).total
+                            : typeof (sm as any).subtotal === "number"
+                            ? (sm as any).subtotal
+                            : typeof (sm as any).amount === "number"
+                            ? (sm as any).amount
+                            : 0;
+
+                    const row = shipAgg.get(key) ?? {
+                        title: null,
+                        revenue: 0,
+                        orders: new Set<string>(),
+                        shipping_method_id: null,
+                        shipping_option_id: null
+                    };
+                    row.revenue += amount;
+                    if (oid) {
+                        row.orders.add(oid);
+                    }
+                    row.title ??= name;
+                    row.shipping_method_id ??= shipping_method_id;
+                    row.shipping_option_id ??= shipping_option_id;
+                    shipAgg.set(key, row);
+                }
+            }
+
+            const rows = [...shipAgg.values()].map((r) => ({
+                product_id: null,
+                variant_id: null,
+                sku: null,
+                title: r.title ?? null,
+                shipping_method_id: r.shipping_method_id ?? null,
+                shipping_option_id: r.shipping_option_id ?? null,
+                quantity: 0,
+                revenue: r.revenue,
+                orders: r.orders.size,
+                value: metric === "revenue" ? r.revenue : r.orders.size
+            }));
+
+            rows.sort((a, b) =>
+                sort === "desc" ? b.value - a.value : a.value - b.value
+            );
+            return rows.slice(0, Math.max(1, Math.min(50, limit)));
+        }
 
         for (const o of list) {
             const oid = o.id ?? "";
@@ -131,6 +218,8 @@ export function createAnalyticsService(
             variant_id: r.variant_id ?? null,
             sku: r.sku ?? null,
             title: r.title ?? null,
+            shipping_method_id: null,
+            shipping_option_id: null,
             quantity: r.quantity,
             revenue: r.revenue,
             orders: r.orders.size,

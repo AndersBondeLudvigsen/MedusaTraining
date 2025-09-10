@@ -18,11 +18,22 @@ export type AdminOrderItemMaybe = {
     variant?: AdminVariantMaybe | null; // when expanded/detail
 };
 
+export type AdminShippingMethodMaybe = {
+    id?: string;
+    name?: string | null;
+    amount?: number;
+    total?: number;
+    subtotal?: number;
+    shipping_option_id?: string | null;
+    shipping_option?: { id?: string; name?: string | null } | null;
+};
+
 export type AdminOrderMinimal = {
     id?: string;
     created_at?: string;
     canceled_at?: string | null;
     items?: AdminOrderItemMaybe[]; // present on detail; sometimes on list depending on setup
+    shipping_methods?: AdminShippingMethodMaybe[]; // present on detail
 };
 
 export type VariantResolution = {
