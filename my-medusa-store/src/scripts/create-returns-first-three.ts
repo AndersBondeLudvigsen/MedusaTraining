@@ -1,10 +1,11 @@
 import type { ExecArgs } from "@medusajs/framework/types";
-import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
+import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 import {
-  beginReturnOrderWorkflow,
-  requestItemReturnWorkflow,
-  confirmReturnRequestWorkflow,
-  // createAndCompleteReturnOrderWorkflow, // available but requires a return shipping option
+  createAndCompleteReturnOrderWorkflow,
+  receiveAndCompleteReturnOrderWorkflow,
+  refundPaymentsWorkflow,
+  getOrderDetailWorkflow,
+  refundPaymentWorkflow,
 } from "@medusajs/core-flows";
 
 type OrderItem = { id: string; quantity?: number; fulfilled_quantity?: number };
@@ -13,157 +14,304 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
 
-  logger.info("🧾 Creating returns for the first 3 orders…");
+  // Paste your order ID here
+  const ORDER_ID = "order_01K4SEVR7PDSQMZ0Y8Z55SEDJM";
 
-  // 1) Find a stock location to receive returns
-  const { data: stockLocations } = (await query.graph({
-    entity: "stock_location",
-    fields: ["id", "name"],
-  })) as { data: Array<{ id: string; name?: string }> };
-
-  if (!stockLocations?.length) {
-    logger.error("❌ No stock locations found. Cannot create returns.");
+  if (!ORDER_ID) {
+    logger.warn(
+      "Please set ORDER_ID in src/scripts/create-returns-first-three.ts before running this script."
+    );
     return;
   }
-  const locationId = stockLocations[0].id;
 
-  // 2) Load orders (take first 3)
-  const { data: allOrders } = (await query.graph({
+  logger.info(`🧾 Creating a return for order ${ORDER_ID}…`);
+
+  // 1) Load order details (id, display_id, items)
+  const { data: orders } = (await query.graph({
     entity: "order",
     fields: [
       "id",
       "display_id",
-      // Fetch full item shape to account for different schemas
+      "currency_code",
+      "region_id",
       "items.*",
     ],
-    // Some setups support ordering and take; keep simple and slice later
+    filters: { id: ORDER_ID },
   })) as any;
 
-  const orders = (allOrders || []).slice(0, 3);
-
-  if (!orders.length) {
-    logger.info("ℹ️ No orders found—nothing to return.");
+  const order = orders?.[0];
+  if (!order) {
+    logger.error(`❌ Order ${ORDER_ID} not found.`);
     return;
   }
 
-  logger.info(`📦 Will create returns for ${orders.length} order(s).`);
-
-  // Helper: best-effort call into available return creation workflow/module
-  async function createReturnForOrder(input: {
-    order_id: string;
-    items: Array<{ id: string; quantity: number; reason_id?: string; note?: string }>;
-    location_id: string;
-    internal_note?: string;
-  }): Promise<{ id?: string } | void> {
-    // Preferred Medusa v2 path: use order return workflows in core-flows.
-    // We avoid requiring a return shipping option by using the 3-step flow:
-    // 1) beginReturnOrderWorkflow -> 2) requestItemReturnWorkflow -> 3) confirmReturnRequestWorkflow
-    // This results in a requested return without creating a return fulfillment.
-    
-    // 1) Begin return (creates a return + order change)
-    const begin = await beginReturnOrderWorkflow(container).run({
-      input: {
-        order_id: input.order_id,
-        location_id: input.location_id,
-        internal_note: input.internal_note,
-      },
-    });
-    const orderChange = (begin as any)?.result ?? begin;
-
-    // 2) Determine return_id either from the workflow result or by re-querying the order_change
-    let returnId: string | undefined = orderChange?.return_id;
-    if (!returnId) {
-      const re = (await query.graph({
-        entity: "order_change",
-        fields: ["id", "return_id", "order_id"],
-        filters: { id: orderChange?.id },
-      })) as { data: Array<{ id: string; return_id?: string }> };
-      returnId = re?.data?.[0]?.return_id;
-    }
-    if (!returnId) {
-      throw new Error("Could not resolve return_id from beginReturnOrderWorkflow result");
-    }
-
-    // 3) Add items to the return
-    await requestItemReturnWorkflow(container).run({
-      input: {
-        return_id: returnId,
-        items: input.items.map((i) => ({ id: i.id, quantity: i.quantity })),
-      },
-    });
-
-    // 4) Confirm the return request (does not require a shipping method)
-    await confirmReturnRequestWorkflow(container).run({
-      input: { return_id: returnId },
-    });
-
-    return { id: returnId };
+  const items: OrderItem[] = Array.isArray(order.items) ? order.items : [];
+  if (!items.length) {
+    logger.warn(`⚠️ Order ${order.display_id ?? order.id}: no items to return.`);
+    return;
   }
 
-  let success = 0;
-  for (const order of orders) {
-    const orderId: string | undefined = order?.id;
-    const display = order?.display_id ?? orderId?.slice(0, 8);
-    if (!orderId) {
-      logger.warn("⚠️ Skipping an order without ID.");
-      continue;
+  // 2) Build return items: return min(1, fulfilled) for each item
+  const returnItems = items
+    .filter((it: any) => !!it?.id)
+    .map((it: any) => {
+      const orderedRaw =
+        it?.quantity ?? it?.detail?.quantity ?? it?.original_quantity ?? 0;
+      const ordered = Number(orderedRaw) || 0;
+
+      const fulfilledRaw =
+        it?.detail?.fulfilled_quantity ?? it?.fulfilled_quantity ?? undefined;
+      const fulfilled =
+        fulfilledRaw === undefined ? undefined : Number(fulfilledRaw) || 0;
+
+      const desired =
+        fulfilled !== undefined
+          ? Math.min(ordered, Math.max(0, fulfilled))
+          : Math.min(1, ordered);
+
+      const quantity = Math.max(0, desired);
+      return { id: String(it.id), quantity };
+    })
+    .filter((it) => it.quantity > 0);
+
+  if (!returnItems.length) {
+    logger.warn(
+      `⚠️ Order ${order.display_id ?? order.id}: no returnable quantity found.`
+    );
+    return;
+  }
+
+  // 3) Pick a return shipping option: prefer "Standard Shipping", else first available
+  const { data: shippingOptions } = (await query.graph({
+    entity: "shipping_option",
+    fields: [
+      "id",
+      "name",
+      "price_type",
+      "provider_id",
+      "type.code",
+      "service_zone_id",
+    ],
+  })) as { data: Array<{ id: string; name?: string }> };
+
+  if (!shippingOptions?.length) {
+    logger.error(
+      "❌ No shipping options found. Create at least one shipping option first."
+    );
+    return;
+  }
+
+  const standard = shippingOptions.find(
+    (o) => (o.name || "").toLowerCase().includes("standard")
+  );
+  const chosenOption = standard || shippingOptions[0];
+
+  logger.info(
+    `🚚 Using return shipping option: ${chosenOption.name || chosenOption.id}`
+  );
+
+  // 4) Create and complete the return with shipping
+  try {
+    const { result } = await createAndCompleteReturnOrderWorkflow(container).run({
+      input: {
+        order_id: order.id,
+        items: returnItems,
+        return_shipping: {
+          option_id: chosenOption.id,
+        },
+        // You can set receive_now to true to auto-receive returned items
+        receive_now: false,
+      },
+    });
+
+    const createdReturnId = result?.id as string | undefined;
+    if (!createdReturnId) {
+      logger.warn(
+        `⚠️ Return created but ID not returned. Attempting to locate by order.`
+      );
     }
 
-    const items: OrderItem[] = Array.isArray(order.items) ? order.items : [];
-    if (!items.length) {
-      logger.warn(`⚠️ Order ${display}: no items to return. Skipping.`);
-      continue;
-    }
+    // 5) Re-fetch the return to get items and refund amount
+    const { data: foundReturns } = (await query.graph({
+      entity: "return",
+      fields: [
+        "id",
+        "status",
+        "refund_amount",
+        "items.id",
+        "items.item_id",
+        "items.quantity",
+      ],
+      filters: createdReturnId ? { id: createdReturnId } : { order_id: order.id },
+    })) as any;
 
-    // Strategy: return 1 unit for each item (safer), capped by fulfilled qty if present
-    const returnItems = items
-      .filter((it) => !!(it as any)?.id)
-      .map((it: any) => {
-        // Support both top-level and nested detail fields across Medusa versions
-        const orderedRaw =
-          it?.quantity ?? it?.detail?.quantity ?? it?.original_quantity ?? 0;
-        const ordered = Number(orderedRaw) || 0;
-
-        const fulfilledRaw =
-          it?.detail?.fulfilled_quantity ?? it?.fulfilled_quantity ?? undefined;
-        const fulfilled =
-          fulfilledRaw === undefined ? undefined : Number(fulfilledRaw) || 0;
-
-        // If fulfilled known, return up to that; otherwise fall back to 1 (if ordered > 0)
-        const desired =
-          fulfilled !== undefined
-            ? Math.min(ordered, Math.max(0, fulfilled))
-            : Math.min(1, ordered);
-
-        const quantity = Math.max(0, desired);
-        return { id: String(it.id), quantity };
-      })
-      .filter((it) => it.quantity > 0);
-
-    if (!returnItems.length) {
-      logger.warn(`⚠️ Order ${display}: no returnable quantity. Skipping.`);
-      continue;
+    const createdReturn = foundReturns?.[0];
+    if (!createdReturn) {
+      logger.error("❌ Could not retrieve created return details.");
+      return;
     }
 
     logger.info(
-      `↩️ Creating return for order ${display} with ${returnItems.length} item(s)…`
+      `✅ Return created for order ${order.display_id ?? order.id}: ${createdReturn.id}`
     );
-    try {
-      const created = await createReturnForOrder({
-        order_id: orderId,
-        items: returnItems,
-        location_id: locationId,
-        internal_note: "Automated return created by script",
+
+    // 6) Receive the returned items (marks return as received)
+    const itemsToReceive = (createdReturn.items || [])
+      .filter((ri: any) => !!ri?.item_id && !!ri?.quantity)
+      .map((ri: any) => ({ id: String(ri.item_id), quantity: Number(ri.quantity) }));
+
+    if (itemsToReceive.length) {
+      await receiveAndCompleteReturnOrderWorkflow(container).run({
+        input: {
+          return_id: createdReturn.id,
+          items: itemsToReceive,
+        },
       });
-      const rid = (created as any)?.id ?? "(id unknown)";
-      logger.info(`✅ Return created for order ${display}: ${rid}`);
-      success++;
-    } catch (e: any) {
-      logger.error(
-        `❌ Failed to create return for order ${display}: ${e?.message || e}`
+      logger.info(`📦 Marked return ${createdReturn.id} as received.`);
+    } else {
+      logger.warn(
+        `⚠️ Return ${createdReturn.id} has no items to receive. Skipping receival.`
       );
     }
-  }
 
-  logger.info(`\n📈 Done. Created ${success} return(s).`);
+    // 7) Determine refund amount from order summary pending difference
+    const { result: detail } = await getOrderDetailWorkflow(container).run({
+      input: {
+        order_id: order.id,
+        fields: [
+          "id",
+          "summary.pending_difference",
+          "summary.raw_pending_difference",
+          "payment_collections.payments.id",
+          "payment_collections.payments.captures.amount",
+          "payment_collections.payments.refunds.amount",
+        ],
+      },
+    });
+
+    const s: any = detail.summary || {};
+    let pendingRawNum: number | undefined = undefined;
+    if (typeof s.pending_difference === "number") {
+      pendingRawNum = s.pending_difference;
+    } else if (
+      s.raw_pending_difference &&
+      typeof s.raw_pending_difference.value === "string"
+    ) {
+      pendingRawNum = Number(s.raw_pending_difference.value);
+    }
+    const amountToRefund = pendingRawNum && pendingRawNum < 0 ? Math.round(-pendingRawNum) : 0;
+
+    if (!amountToRefund) {
+      logger.info(
+        `ℹ️ No outstanding negative balance for order ${order.display_id ?? order.id}. Skipping refund.`
+      );
+      return;
+    }
+
+    // 8) Refund captured payments up to the pending difference
+    const payments: any[] = (detail.payment_collections || [])
+      .flatMap((pc: any) => pc.payments || [])
+      .filter((p: any) => !!p?.id);
+
+    const refundableByPayment = payments.map((p: any) => {
+      const captured = (p.captures || []).reduce(
+        (acc: number, c: any) => acc + Number(c.amount || 0),
+        0
+      );
+      const refunded = (p.refunds || []).reduce(
+        (acc: number, r: any) => acc + Number(r.amount || 0),
+        0
+      );
+      return { id: p.id, refundable: Math.max(0, captured - refunded) };
+    });
+
+    let remaining = amountToRefund;
+    const refundInputs: Array<{ payment_id: string; amount: number }> = [];
+    for (const p of refundableByPayment) {
+      if (remaining <= 0) break;
+      if (p.refundable <= 0) continue;
+      const amt = Math.min(p.refundable, remaining);
+      refundInputs.push({ payment_id: p.id, amount: amt });
+      remaining -= amt;
+    }
+
+    if (!refundInputs.length) {
+      logger.warn(
+        `⚠️ No refundable payments found for order ${order.display_id ?? order.id}.`
+      );
+      return;
+    }
+
+    let totalRefunded = 0;
+    try {
+      await refundPaymentsWorkflow(container).run({ input: refundInputs });
+      totalRefunded = refundInputs.reduce((a, b) => a + b.amount, 0);
+      logger.info(
+        `💸 Refunded ${totalRefunded} for order ${order.display_id ?? order.id} (batch).`
+      );
+    } catch (err: any) {
+      logger.error(
+        `❌ Batch refund failed for order ${order.display_id ?? order.id}: ${
+          err?.message || err
+        }`
+      );
+    }
+
+    // Verify if any negative pending difference remains; if so, settle via single-payment workflow
+    try {
+      const { result: afterRefund } = await getOrderDetailWorkflow(container).run({
+        input: {
+          order_id: order.id,
+          fields: ["id", "summary.pending_difference", "payment_collections.payments.id"],
+        },
+      });
+      const remainingDiff = Number(afterRefund.summary?.pending_difference ?? 0);
+      if (remainingDiff < 0) {
+        let remainingToRefund = Math.round(-remainingDiff);
+        logger.info(
+          `ℹ️ Outstanding refund still due: ${remainingToRefund}. Settling via refundPaymentWorkflow...`
+        );
+        // Reuse payments order from earlier detail and compute refundable per payment
+        const paymentsLeft: any[] = (detail.payment_collections || [])
+          .flatMap((pc: any) => pc.payments || [])
+          .filter((p: any) => !!p?.id);
+        for (const p of paymentsLeft) {
+          if (remainingToRefund <= 0) break;
+          const captured = (p.captures || []).reduce(
+            (acc: number, c: any) => acc + Number(c.amount || 0),
+            0
+          );
+          const refunded = (p.refunds || []).reduce(
+            (acc: number, r: any) => acc + Number(r.amount || 0),
+            0
+          );
+          const refundable = Math.max(0, captured - refunded);
+          const amt = Math.min(remainingToRefund, refundable);
+          if (amt <= 0) continue;
+          try {
+            await refundPaymentWorkflow(container).run({
+              input: { payment_id: p.id, amount: amt },
+            });
+            totalRefunded += amt;
+            remainingToRefund -= amt;
+            logger.info(`💸 Refunded ${amt} on payment ${p.id}.`);
+          } catch (err: any) {
+            logger.warn(
+              `⚠️ refundPaymentWorkflow failed on ${p.id} for ${amt}: ${
+                err?.message || err
+              }`
+            );
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ Could not verify remaining difference: ${err?.message || err}`);
+    }
+  } catch (e: any) {
+    logger.error(
+      `❌ Failed to create return for order ${order.display_id ?? order.id}: ${
+        e?.message || e
+      }`
+    );
+  }
 }

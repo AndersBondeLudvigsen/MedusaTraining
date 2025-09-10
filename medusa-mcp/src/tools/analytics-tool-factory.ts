@@ -302,3 +302,5 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
 
     return [orders_count, sales_aggregate];
 }
+
+
