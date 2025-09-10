@@ -25,7 +25,11 @@ function loadSeeder(script: string): any {
  * Runs a seeding script using the current Medusa container.
  */
 export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
-  const { script = "seed-data" } = parseBody<{ script?: string }>(req)
+  const {
+    script = "seed-data",
+    args = [],
+    orderId,
+  } = parseBody<{ script?: string; args?: string[]; orderId?: string }>(req)
 
   const allowed = new Set([
     "seed",
@@ -34,6 +38,8 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     "seed-customers",
     "seed-customer-groups",
     "nuke-orders",
+    // returns workflow helper
+    "create-returns",
   ])
 
   if (!allowed.has(script)) {
@@ -54,6 +60,13 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
 
     logger.info(`Running seed script: ${script}`)
 
+    // Build args for script runners
+    const execArgs = Array.isArray(args) ? [...args] : []
+    // Convenience: allow orderId to be sent as a top-level param
+    if (orderId && !execArgs.some((a) => a.startsWith("--order-id"))) {
+      execArgs.push(`--order-id=${orderId}`)
+    }
+
     // Temporarily set confirmation env for destructive script
     const prevNuke = process.env.NUKE_ORDERS
     if (script === "nuke-orders") {
@@ -62,7 +75,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
 
     let result: any
     try {
-      result = await run({ container: req.scope })
+      result = await run({ container: req.scope, args: execArgs })
     } finally {
       if (script === "nuke-orders") {
         if (prevNuke === undefined) {
