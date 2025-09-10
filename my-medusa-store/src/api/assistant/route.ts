@@ -26,15 +26,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const chartTitle =
       typeof body.chartTitle === "string" ? body.chartTitle : undefined;
 
-    console.log("🚀 ASSISTANT REQUEST RECEIVED:");
-    console.log("===============================");
-    console.log("User prompt:", prompt);
-    console.log("Wants chart:", wantsChart);
-    console.log("Chart type:", chartType);
-    console.log("Chart title:", chartTitle || "N/A");
-    console.log("===============================");
-
-
     const mcp = await getMcp();
 
     const tools = await mcp.listTools();
@@ -61,8 +52,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       );
 
       if (plan.action === "final_answer") {
-        console.log("✅ AI decided to provide the final answer.");
-
         // 🔸 END turn with final message
         metricsStore.endAssistantTurn(turnId, plan.answer ?? "");
 

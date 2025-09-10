@@ -34,16 +34,11 @@ export async function planNextStepWithGemini(
     : "Do NOT include any chart/graph JSON. Provide concise text only. If data is needed, call the right tool.";
 
   // Get the combined prompt for all specializations
-  const rolePrompt = getCombinedPrompt(wantsChart);
-
-  console.log("🤖 COMBINED PROMPT BEING SENT TO AI:");
-  console.log("=====================================");
-  console.log(rolePrompt);
-  console.log("=====================================");
+  const Prompt = getCombinedPrompt(wantsChart);
 
   // STATIC CONTENT (sent once as system message)
   const systemMessage =
-    `${rolePrompt}\n\n` +
+    `${Prompt}\n\n` +
     `Decide the next step based on the user's goal and the tool-call history.\n` +
     `Actions: 'call_tool' or 'final_answer'.\n\n` +
     `1) If you need information or must perform an action, choose 'call_tool'.\n` +
@@ -71,11 +66,6 @@ export async function planNextStepWithGemini(
       : "No previous actions taken.",
     `What should I do next? Respond with ONLY the JSON object.`,
   ].join("\n\n");
-
-  console.log("📝 USER MESSAGE BEING SENT TO AI:");
-  console.log("===================================");
-  console.log(userMessage);
-  console.log("===================================");
 
   const ai = new (GoogleGenAI as any)({ apiKey });
 
