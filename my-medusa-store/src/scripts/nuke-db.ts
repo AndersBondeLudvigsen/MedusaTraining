@@ -104,6 +104,8 @@ export default async function nukeAll({ container }: ExecArgs) {
     taxRegions: await listIds(query, "tax_region"),
     apiKeys: await listIds(query, "api_key"),
     customerGroups: await listIds(query, "customer_group"),
+    promotions: await listIds(query, "promotion"),
+    campaigns: await listIds(query, "campaign"),
     draftOrders: await listIds(query, "draft_order"),
     orders: await listIds(query, "order"),
     customers: await listIds(query, "customer"),
@@ -167,6 +169,77 @@ export default async function nukeAll({ container }: ExecArgs) {
     if (!catalog.customerGroups.length) return
     for (const ids of chunk(catalog.customerGroups)) {
       await deleteCustomerGroupsWorkflow(container).run({ input: { ids } })
+    }
+  })
+
+  // 2.5) Marketing entities (promotions and campaigns)
+  await step("Soft delete promotions (module)", async () => {
+    if (!catalog.promotions.length) return
+    try {
+      const promotionModule: any = container.resolve("promotion")
+      for (const ids of chunk(catalog.promotions)) {
+        if (typeof promotionModule.softDeletePromotions === "function") {
+          await promotionModule.softDeletePromotions(ids)
+        } else if (typeof promotionModule.deletePromotions === "function") {
+          await promotionModule.deletePromotions(ids)
+        } else {
+          throw new Error("PROMOTION module delete API not available")
+        }
+      }
+    } catch (e: any) {
+      if (e.message?.includes("not registered")) {
+        console.log("[nuke] Promotion module not available, skipping...")
+      } else {
+        throw e
+      }
+    }
+  })
+
+  await step("Soft delete campaigns (promotion module)", async () => {
+    if (!catalog.campaigns.length) return
+    try {
+      // Try promotion module first since campaigns are often managed there
+      const promotionModule: any = container.resolve("promotion")
+      for (const ids of chunk(catalog.campaigns)) {
+        if (typeof promotionModule.softDeleteCampaigns === "function") {
+          await promotionModule.softDeleteCampaigns(ids)
+        } else if (typeof promotionModule.deleteCampaigns === "function") {
+          await promotionModule.deleteCampaigns(ids)
+        } else {
+          throw new Error("Campaign delete API not available in promotion module")
+        }
+      }
+    } catch (e: any) {
+      console.log("[nuke] Could not delete campaigns via promotion module:", e.message)
+      
+      // Fallback 1: try standalone campaign module
+      try {
+        const campaignModule: any = container.resolve("campaign")
+        for (const ids of chunk(catalog.campaigns)) {
+          if (typeof campaignModule.softDeleteCampaigns === "function") {
+            await campaignModule.softDeleteCampaigns(ids)
+          } else if (typeof campaignModule.deleteCampaigns === "function") {
+            await campaignModule.deleteCampaigns(ids)
+          } else {
+            throw new Error("CAMPAIGN module delete API not available")
+          }
+        }
+      } catch (e2: any) {
+        console.log("[nuke] Could not delete campaigns via campaign module:", e2.message)
+        
+        // Fallback 2: try using entity manager for direct deletion
+        try {
+          const manager: any = container.resolve("manager")
+          for (const ids of chunk(catalog.campaigns)) {
+            // This is a more direct approach but may not trigger proper cleanup
+            await manager.delete("Campaign", ids)
+          }
+          console.log("[nuke] Campaigns deleted via entity manager")
+        } catch (e3: any) {
+          console.log("[nuke] Could not delete campaigns via entity manager:", e3.message)
+          console.log("[nuke] Campaigns might need manual deletion - consider checking the admin panel")
+        }
+      }
     }
   })
 
