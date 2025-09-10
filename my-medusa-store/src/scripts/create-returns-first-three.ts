@@ -1,19 +1,22 @@
 import type { ExecArgs } from "@medusajs/framework/types";
-import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
-import {
-  beginReturnOrderWorkflow,
-  requestItemReturnWorkflow,
-  confirmReturnRequestWorkflow,
-  // createAndCompleteReturnOrderWorkflow, // available but requires a return shipping option
-} from "@medusajs/core-flows";
+import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
+import { createAndCompleteReturnOrderWorkflow } from "@medusajs/core-flows"; // follow the return end-to-end
 
 type OrderItem = { id: string; quantity?: number; fulfilled_quantity?: number };
+
+// Optional: hardcode a specific order ID to process only that order
+// Set to an empty string to fallback to processing the first 3 orders
+const HARDCODED_ORDER_ID = "order_01K4SC5B8FCBZGR1W233B57QXH"; // 
 
 export default async function createReturnsForFirstThree({ container }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
 
-  logger.info("🧾 Creating returns for the first 3 orders…");
+  if (HARDCODED_ORDER_ID) {
+    logger.info(`🧾 Creating return for order ${HARDCODED_ORDER_ID}…`);
+  } else {
+    logger.info("🧾 Creating returns for the first 3 orders…");
+  }
 
   // 1) Find a stock location to receive returns
   const { data: stockLocations } = (await query.graph({
@@ -27,19 +30,29 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
   }
   const locationId = stockLocations[0].id;
 
-  // 2) Load orders (take first 3)
-  const { data: allOrders } = (await query.graph({
-    entity: "order",
-    fields: [
-      "id",
-      "display_id",
-      // Fetch full item shape to account for different schemas
-      "items.*",
-    ],
-    // Some setups support ordering and take; keep simple and slice later
-  })) as any;
-
-  const orders = (allOrders || []).slice(0, 3);
+  // 2) Load orders
+  let orders: any[] = [];
+  if (HARDCODED_ORDER_ID) {
+    const { data } = (await query.graph({
+      entity: "order",
+      fields: ["id", "display_id", "items.*"],
+      filters: { id: HARDCODED_ORDER_ID },
+    })) as any;
+    if (data?.length) {
+      orders = [data[0]];
+    }
+  } else {
+    const { data: allOrders } = (await query.graph({
+      entity: "order",
+      fields: [
+        "id",
+        "display_id",
+        // Fetch full item shape to account for different schemas
+        "items.*",
+      ],
+    })) as any;
+    orders = (allOrders || []).slice(0, 3);
+  }
 
   if (!orders.length) {
     logger.info("ℹ️ No orders found—nothing to return.");
@@ -48,56 +61,47 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
 
   logger.info(`📦 Will create returns for ${orders.length} order(s).`);
 
-  // Helper: best-effort call into available return creation workflow/module
+  // 2.5) Load shipping options and pick a default to be used for returns
+  // Preference: name contains "Standard", else take index 0
+  let { data: shippingOptions } = (await query.graph({
+    entity: "shipping_option",
+    fields: ["id", "name"],
+  })) as { data: Array<{ id: string; name?: string }> };
+  shippingOptions = shippingOptions || [];
+  const chosenShippingOptionId =
+    shippingOptions.find((s) => /standard/i.test(s?.name || ""))?.id ||
+    shippingOptions[0]?.id;
+  if (!chosenShippingOptionId) {
+    logger.error(
+      "❌ No shipping options found. A return shipping option is required to complete returns."
+    );
+    return;
+  }
+
+  // Helper: end-to-end return using createAndCompleteReturnOrderWorkflow
+  // This will: create the return, create a return fulfillment with the chosen
+  // shipping option, and mark as received if receive_now = true.
   async function createReturnForOrder(input: {
     order_id: string;
     items: Array<{ id: string; quantity: number; reason_id?: string; note?: string }>;
-    location_id: string;
+    location_id?: string;
     internal_note?: string;
   }): Promise<{ id?: string } | void> {
-    // Preferred Medusa v2 path: use order return workflows in core-flows.
-    // We avoid requiring a return shipping option by using the 3-step flow:
-    // 1) beginReturnOrderWorkflow -> 2) requestItemReturnWorkflow -> 3) confirmReturnRequestWorkflow
-    // This results in a requested return without creating a return fulfillment.
-    
-    // 1) Begin return (creates a return + order change)
-    const begin = await beginReturnOrderWorkflow(container).run({
+    const { result } = await createAndCompleteReturnOrderWorkflow(container).run({
       input: {
         order_id: input.order_id,
-        location_id: input.location_id,
-        internal_note: input.internal_note,
-      },
-    });
-    const orderChange = (begin as any)?.result ?? begin;
-
-    // 2) Determine return_id either from the workflow result or by re-querying the order_change
-    let returnId: string | undefined = orderChange?.return_id;
-    if (!returnId) {
-      const re = (await query.graph({
-        entity: "order_change",
-        fields: ["id", "return_id", "order_id"],
-        filters: { id: orderChange?.id },
-      })) as { data: Array<{ id: string; return_id?: string }> };
-      returnId = re?.data?.[0]?.return_id;
-    }
-    if (!returnId) {
-      throw new Error("Could not resolve return_id from beginReturnOrderWorkflow result");
-    }
-
-    // 3) Add items to the return
-    await requestItemReturnWorkflow(container).run({
-      input: {
-        return_id: returnId,
         items: input.items.map((i) => ({ id: i.id, quantity: i.quantity })),
+        return_shipping: {
+          option_id: chosenShippingOptionId,
+        },
+        // Create + confirm + add return shipping (no auto-receive by default)
+        receive_now: false,
+        // If provided, overrides shipping option's stock location
+        location_id: input.location_id,
+        note: input.internal_note,
       },
     });
-
-    // 4) Confirm the return request (does not require a shipping method)
-    await confirmReturnRequestWorkflow(container).run({
-      input: { return_id: returnId },
-    });
-
-    return { id: returnId };
+    return { id: (result as any)?.id };
   }
 
   let success = 0;
