@@ -1,6 +1,6 @@
 import { defineRouteConfig } from "@medusajs/admin-sdk"
-import { Button, Container, Heading, Text, Input, Label } from "@medusajs/ui"
-import { useState } from "react"
+import { Button, Container, Heading, Text, Input, Label, Select } from "@medusajs/ui"
+import { useEffect, useState } from "react"
 import { sdk } from "../../../lib/sdk"
 import { Sun } from "@medusajs/icons"
 
@@ -11,6 +11,8 @@ const SeedProductsPage = () => {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [orderId, setOrderId] = useState("")
+  const [recentOrders, setRecentOrders] = useState<Array<{ id: string; display_id?: string }>>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
 
   const runSeed = async (script: string, extra?: Record<string, any>) => {
     setLoading(true)
@@ -31,6 +33,25 @@ const SeedProductsPage = () => {
       setLoading(false)
     }
   }
+
+  const loadRecentOrders = async () => {
+    setOrdersLoading(true)
+    try {
+      const res = await sdk.client.fetch<{ orders: Array<{ id: string; display_id?: string }> }>(
+        "/admin/orders/recent?limit=25",
+        { method: "GET" }
+      )
+      setRecentOrders(res?.orders || [])
+    } catch (_) {
+      // ignore
+    } finally {
+      setOrdersLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadRecentOrders()
+  }, [])
 
   return (
     <Container className="divide-y p-0">
@@ -56,13 +77,18 @@ const SeedProductsPage = () => {
             Delete orders
           </Button>
         </div>
-        <div className="mt-6 flex flex-col gap-3">
-          <Heading level="h2">Create Return</Heading>
-          <Text size="small" className="text-ui-fg-subtle">
+        <div className="mt-6 rounded-md border p-4">
+          <div className="flex items-center justify-between">
+            <Heading level="h2">Create Return</Heading>
+            <Button size="small" variant="secondary" disabled={ordersLoading} onClick={loadRecentOrders}>
+              {ordersLoading ? "Refreshing…" : "Refresh orders"}
+            </Button>
+          </div>
+          <Text size="small" className="text-ui-fg-subtle mt-1">
             Create and complete a return for a specific order.
           </Text>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-2">
-            <div className="flex-1">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2">
               <Label htmlFor="order-id">Order ID</Label>
               <Input
                 id="order-id"
@@ -70,7 +96,35 @@ const SeedProductsPage = () => {
                 value={orderId}
                 onChange={(e) => setOrderId(e.target.value)}
               />
+              <Text size="small" className="text-ui-fg-subtle mt-1">Paste an order ID or pick from recent.</Text>
             </div>
+            <div className="sm:col-span-1">
+              <Label>Recent orders</Label>
+              <Select
+                size="base"
+                value={orderId || undefined}
+                onValueChange={(val) => setOrderId(val)}
+              >
+                <Select.Trigger aria-label="Recent orders">
+                  <Select.Value placeholder="Select recent order" />
+                </Select.Trigger>
+                <Select.Content>
+                  {recentOrders.length === 0 ? (
+                    <Select.Item value="no-orders" disabled>
+                      {ordersLoading ? "Loading…" : "No recent orders"}
+                    </Select.Item>
+                  ) : (
+                    recentOrders.map((o) => (
+                      <Select.Item key={o.id} value={o.id}>
+                        {(o.display_id ? `#${o.display_id}` : o.id).toString()}
+                      </Select.Item>
+                    ))
+                  )}
+                </Select.Content>
+              </Select>
+            </div>
+          </div>
+          <div className="mt-4">
             <Button
               size="small"
               disabled={loading || !orderId}

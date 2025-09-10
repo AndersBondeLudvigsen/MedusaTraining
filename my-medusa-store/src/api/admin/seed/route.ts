@@ -52,6 +52,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   const mod = loadSeeder(script)
     const run = (mod?.default || mod?.run || mod) as
       | ((args: { container: any }) => Promise<any>)
+      | ((args: { container: any; args?: string[] }) => Promise<any>)
       | undefined
 
     if (typeof run !== "function") {
@@ -75,7 +76,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
 
     let result: any
     try {
-      result = await run({ container: req.scope, args: execArgs })
+      result = await (run as any)({ container: req.scope, args: execArgs })
     } finally {
       if (script === "nuke-orders") {
         if (prevNuke === undefined) {
