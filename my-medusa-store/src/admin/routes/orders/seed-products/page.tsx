@@ -1,5 +1,5 @@
 import { defineRouteConfig } from "@medusajs/admin-sdk"
-import { Button, Container, Heading, Text, Input, Label, Select } from "@medusajs/ui"
+import { Button, Container, Heading, Text, Input, Label, Select, toast, Toaster } from "@medusajs/ui"
 import { useEffect, useState } from "react"
 import { sdk } from "../../../lib/sdk"
 import { Sun } from "@medusajs/icons"
@@ -27,8 +27,10 @@ const SeedProductsPage = () => {
         }
       )
       setMessage(res?.message || "Done")
+      toast.success(res?.message || `Script '${script}' finished`)
     } catch (e: any) {
       setError(e?.message ?? "Failed")
+      toast.error(e?.message ?? `Script '${script}' failed`)
     } finally {
       setLoading(false)
     }
@@ -42,8 +44,14 @@ const SeedProductsPage = () => {
         { method: "GET" }
       )
       setRecentOrders(res?.orders || [])
+      if ((res?.orders || []).length) {
+        toast.success("Loaded recent orders")
+      } else {
+        toast.info("No recent orders found")
+      }
     } catch (_) {
       // ignore
+      toast.error("Failed to load recent orders")
     } finally {
       setOrdersLoading(false)
     }
@@ -144,6 +152,7 @@ const SeedProductsPage = () => {
         {message && <Text className="text-green-600">{message}</Text>}
         {error && <Text className="text-ui-fg-error">{error}</Text>}
       </div>
+      <Toaster position="bottom-right" />
     </Container>
   )
 }
