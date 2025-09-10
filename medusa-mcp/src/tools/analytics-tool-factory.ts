@@ -279,3 +279,4 @@ export function createAnalyticsTools(
 
     return [orders_count, sales_aggregate];
 }
+
