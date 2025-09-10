@@ -1,4 +1,3 @@
-// medusa-mcp/src/tools/analytics-tool-factory.ts
 import { defineTool } from "../utils/define-tools";
 
 type AnalyticsService = {
@@ -6,7 +5,6 @@ type AnalyticsService = {
     salesAggregate: (params: {
         start: string;
         end: string;
-
         group_by: "product" | "variant" | "shipping";
         metric: "quantity" | "revenue" | "orders";
         limit?: number;
@@ -23,13 +21,14 @@ type AnalyticsService = {
             revenue: number;
             orders: number;
             value: number;
-            shipping_option_id?: string | null; // ← add
-            shipping_method_id?: string | null; // ← add
         }>
     >;
 };
 
-export function createAnalyticsTools(analytics: AnalyticsService) {
+export function createAnalyticsTools(
+    analytics: AnalyticsService
+): Array<ReturnType<typeof defineTool>> {
+    // alias coercers
     const coerceRange = (
         input: Record<string, unknown>
     ): { start?: string; end?: string } => {
@@ -56,21 +55,18 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             return undefined;
         }
         const v = String(raw).toLowerCase().trim();
-
         if (v.startsWith("product")) {
             return "product";
         }
         if (v.startsWith("variant")) {
             return "variant";
         }
-
         if (
             v.startsWith("shipping") ||
             v.startsWith("shipping_method") ||
             v.startsWith("shipping-method") ||
             v.startsWith("shipping option") ||
             v.startsWith("shipping_option")
-
         ) {
             return "shipping";
         }
@@ -90,27 +86,13 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             return undefined;
         }
         const v = String(raw).toLowerCase().trim();
-        if (
-            [
-                "quantity",
-                "qty",
-                "units",
-                "unit",
-                "shipments",
-                "methods"
-            ].includes(v)
-        ) {
+        if (["quantity", "qty", "units", "unit"].includes(v)) {
             return "quantity";
         }
         if (
-            [
-                "orders",
-                "order",
-                "order_count",
-                "num_orders",
-                "count",
-                "usage"
-            ].includes(v)
+            ["orders", "order", "order_count", "num_orders", "count"].includes(
+                v
+            )
         ) {
             return "orders";
         }
@@ -124,9 +106,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 "sum",
                 "total",
                 "total_sales",
-                "sum_sales",
-                "shipping_revenue",
-                "postage"
+                "sum_sales"
             ].includes(v)
         ) {
             return "revenue";
@@ -169,7 +149,6 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
     const sales_aggregate = defineTool((z) => ({
         name: "sales_aggregate",
         description:
-
             "Aggregate sales in a UTC date range with grouping and metric. Group by: product, variant, or shipping (method). Metric accepts: quantity (qty/units), revenue (sales/amount/total/sum), orders (count).",
         inputSchema: {
             start: z.string().datetime().optional(),
@@ -179,6 +158,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             from: z.string().datetime().optional(),
             to: z.string().datetime().optional(),
 
+            // Accept any string for group_by and metric; we coerce/validate in handler
             group_by: z.string().optional(),
             grouping: z.string().optional(),
             group: z.string().optional(),
@@ -209,13 +189,12 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             const metric = coerceMetric(input);
             if (!group_by) {
                 throw new Error(
-
                     "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product', 'variant', or 'shipping' (method)."
                 );
             }
             if (!metric) {
                 throw new Error(
-                    "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders' (aliases include: qty/units/shipments, sales/amount/total/sum, count/usage)."
+                    "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders' (aliases: qty/units, sales/amount/total/sum, count)."
                 );
             }
 
@@ -223,7 +202,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 typeof input.limit === "number" && Number.isInteger(input.limit)
                     ? Math.max(1, Math.min(50, input.limit))
                     : 5;
-
+            // Sort coercion: support 'order' and 'order_by' like "quantity asc"
             const sortToken = ((): string => {
                 const o = (input.order as string | undefined)?.toLowerCase();
                 const ob = (
@@ -281,7 +260,6 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 sort: parsed.data.sort
             });
 
-
             const titleGroup =
                 parsed.data.group_by === "shipping"
                     ? "shipping methods"
@@ -294,7 +272,6 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 results: rows,
                 xKey: "rank",
                 yKey: "value",
-
                 title: `Top ${titleGroup} by ${parsed.data.metric}`
             };
         }
