@@ -5,6 +5,7 @@ import {
   receiveAndCompleteReturnOrderWorkflow,
   refundPaymentsWorkflow,
   getOrderDetailWorkflow,
+  refundPaymentWorkflow,
 } from "@medusajs/core-flows";
 
 type OrderItem = { id: string; quantity?: number; fulfilled_quantity?: number };
@@ -14,7 +15,7 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
 
   // Paste your order ID here
-  const ORDER_ID = "order_01K4SEVRT2P546ET9MDPEGX1SF";
+  const ORDER_ID = "order_01K4SEVR7PDSQMZ0Y8Z55SEDJM";
 
   if (!ORDER_ID) {
     logger.warn(
@@ -173,49 +174,14 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
       );
     }
 
-    // 7) Determine refund amount
-    let refundAmount = Number(createdReturn.refund_amount ?? 0);
-
-    if (!refundAmount || isNaN(refundAmount)) {
-      // Fallback: compute from order's refundable per-unit totals
-      const { result: detail } = await getOrderDetailWorkflow(container).run({
-        input: {
-          order_id: order.id,
-          fields: [
-            "id",
-            "currency_code",
-            "items.id",
-            "items.refundable_total_per_unit",
-            "payment_collections.id",
-            "payment_collections.payments.id",
-            "payment_collections.payments.captures.amount",
-            "payment_collections.payments.refunds.amount",
-          ],
-        },
-      });
-      const itemMap: Record<string, number> = {};
-      for (const it of detail.items || []) {
-        itemMap[it.id] = Number(it.refundable_total_per_unit ?? 0) || 0;
-      }
-      refundAmount = (createdReturn.items || []).reduce(
-        (sum: number, ri: any) => sum + (itemMap[ri.item_id] || 0) * Number(ri.quantity || 0),
-        0
-      );
-    }
-
-    if (!refundAmount || refundAmount <= 0) {
-      logger.warn(
-        `⚠️ Computed refund amount is 0 for return ${createdReturn.id}. Skipping refund.`
-      );
-      return;
-    }
-
-    // 8) Refund captured payments up to the refund amount
-    const { result: orderDetail } = await getOrderDetailWorkflow(container).run({
+    // 7) Determine refund amount from order summary pending difference
+    const { result: detail } = await getOrderDetailWorkflow(container).run({
       input: {
         order_id: order.id,
         fields: [
           "id",
+          "summary.pending_difference",
+          "summary.raw_pending_difference",
           "payment_collections.payments.id",
           "payment_collections.payments.captures.amount",
           "payment_collections.payments.refunds.amount",
@@ -223,7 +189,27 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
       },
     });
 
-    const payments: any[] = (orderDetail.payment_collections || [])
+    const s: any = detail.summary || {};
+    let pendingRawNum: number | undefined = undefined;
+    if (typeof s.pending_difference === "number") {
+      pendingRawNum = s.pending_difference;
+    } else if (
+      s.raw_pending_difference &&
+      typeof s.raw_pending_difference.value === "string"
+    ) {
+      pendingRawNum = Number(s.raw_pending_difference.value);
+    }
+    const amountToRefund = pendingRawNum && pendingRawNum < 0 ? Math.round(-pendingRawNum) : 0;
+
+    if (!amountToRefund) {
+      logger.info(
+        `ℹ️ No outstanding negative balance for order ${order.display_id ?? order.id}. Skipping refund.`
+      );
+      return;
+    }
+
+    // 8) Refund captured payments up to the pending difference
+    const payments: any[] = (detail.payment_collections || [])
       .flatMap((pc: any) => pc.payments || [])
       .filter((p: any) => !!p?.id);
 
@@ -239,7 +225,7 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
       return { id: p.id, refundable: Math.max(0, captured - refunded) };
     });
 
-    let remaining = Math.round(Number(refundAmount));
+    let remaining = amountToRefund;
     const refundInputs: Array<{ payment_id: string; amount: number }> = [];
     for (const p of refundableByPayment) {
       if (remaining <= 0) break;
@@ -256,19 +242,70 @@ export default async function createReturnsForFirstThree({ container }: ExecArgs
       return;
     }
 
+    let totalRefunded = 0;
     try {
       await refundPaymentsWorkflow(container).run({ input: refundInputs });
+      totalRefunded = refundInputs.reduce((a, b) => a + b.amount, 0);
       logger.info(
-        `💸 Refunded ${refundInputs
-          .map((r) => r.amount)
-          .reduce((a, b) => a + b, 0)} for order ${order.display_id ?? order.id}.`
+        `💸 Refunded ${totalRefunded} for order ${order.display_id ?? order.id} (batch).`
       );
     } catch (err: any) {
       logger.error(
-        `❌ Failed to refund payments for order ${order.display_id ?? order.id}: ${
+        `❌ Batch refund failed for order ${order.display_id ?? order.id}: ${
           err?.message || err
         }`
       );
+    }
+
+    // Verify if any negative pending difference remains; if so, settle via single-payment workflow
+    try {
+      const { result: afterRefund } = await getOrderDetailWorkflow(container).run({
+        input: {
+          order_id: order.id,
+          fields: ["id", "summary.pending_difference", "payment_collections.payments.id"],
+        },
+      });
+      const remainingDiff = Number(afterRefund.summary?.pending_difference ?? 0);
+      if (remainingDiff < 0) {
+        let remainingToRefund = Math.round(-remainingDiff);
+        logger.info(
+          `ℹ️ Outstanding refund still due: ${remainingToRefund}. Settling via refundPaymentWorkflow...`
+        );
+        // Reuse payments order from earlier detail and compute refundable per payment
+        const paymentsLeft: any[] = (detail.payment_collections || [])
+          .flatMap((pc: any) => pc.payments || [])
+          .filter((p: any) => !!p?.id);
+        for (const p of paymentsLeft) {
+          if (remainingToRefund <= 0) break;
+          const captured = (p.captures || []).reduce(
+            (acc: number, c: any) => acc + Number(c.amount || 0),
+            0
+          );
+          const refunded = (p.refunds || []).reduce(
+            (acc: number, r: any) => acc + Number(r.amount || 0),
+            0
+          );
+          const refundable = Math.max(0, captured - refunded);
+          const amt = Math.min(remainingToRefund, refundable);
+          if (amt <= 0) continue;
+          try {
+            await refundPaymentWorkflow(container).run({
+              input: { payment_id: p.id, amount: amt },
+            });
+            totalRefunded += amt;
+            remainingToRefund -= amt;
+            logger.info(`💸 Refunded ${amt} on payment ${p.id}.`);
+          } catch (err: any) {
+            logger.warn(
+              `⚠️ refundPaymentWorkflow failed on ${p.id} for ${amt}: ${
+                err?.message || err
+              }`
+            );
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ Could not verify remaining difference: ${err?.message || err}`);
     }
   } catch (e: any) {
     logger.error(
