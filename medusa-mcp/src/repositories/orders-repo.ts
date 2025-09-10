@@ -18,20 +18,16 @@ export function createOrdersRepo(http: Http): {
         const acc: AdminOrderMinimal[] = [];
         const base = {
             created_at: { gte: fromIso, lt: toIso },
-            // Ensure we include items and shipping_methods on the list payload
-            // and try to include nested fields where supported.
-            // Using +field syntax to add to default response fields.
-            fields:
-                [
-                    "+id",
-                    "+created_at",
-                    "+canceled_at",
-                    "+items",
-                    "+shipping_methods",
-                    "+shipping_methods.id",
-                    "+shipping_methods.name",
-                    "+shipping_methods.shipping_option_id"
-                ].join(",")
+            fields: [
+                "+id",
+                "+created_at",
+                "+canceled_at",
+                "+items",
+                "+shipping_methods",
+                "+shipping_methods.id",
+                "+shipping_methods.name",
+                "+shipping_methods.shipping_option_id"
+            ].join(",")
         } as const;
         // paginate
         while (true) {
@@ -73,7 +69,9 @@ export function createOrdersRepo(http: Http): {
             list.map(async (o) => {
                 // If we already have both items and shipping methods on the list payload,
                 // avoid fetching the order detail again.
-                const hasItems = Array.isArray((o as any).items) && (o as any).items.length > 0;
+                const hasItems =
+                    Array.isArray((o as any).items) &&
+                    (o as any).items.length > 0;
                 const hasShipping =
                     Array.isArray((o as any).shipping_methods) &&
                     (o as any).shipping_methods.length > 0;
@@ -84,7 +82,11 @@ export function createOrdersRepo(http: Http): {
                     : false;
 
                 if (!o.id) {
-                    return { ...o, items: [], shipping_methods: [] } as AdminOrderMinimal;
+                    return {
+                        ...o,
+                        items: [],
+                        shipping_methods: []
+                    } as AdminOrderMinimal;
                 }
                 // If shipping methods exist but lack shipping_option_id, fetch detail to normalize keys
                 if (hasItems && hasShipping && hasShippingOptionIds) {
@@ -99,7 +101,9 @@ export function createOrdersRepo(http: Http): {
                         ...o,
                         items: detail?.order?.items ?? o.items ?? [],
                         shipping_methods:
-                            detail?.order?.shipping_methods ?? o.shipping_methods ?? []
+                            detail?.order?.shipping_methods ??
+                            o.shipping_methods ??
+                            []
                     } as AdminOrderMinimal;
                 } catch {
                     return {

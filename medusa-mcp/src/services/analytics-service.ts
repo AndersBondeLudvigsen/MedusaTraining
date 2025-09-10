@@ -97,12 +97,19 @@ export function createAnalyticsService(
                         (sm as any).shipping_option?.name ??
                         null;
                     const key =
-                        (sm as any).shipping_option_id || smName || (sm as any).id;
-                    if (!key) continue;
+                        (sm as any).shipping_option_id ||
+                        smName ||
+                        (sm as any).id;
+                    if (!key) {
+                        continue;
+                    }
                     const name: string | null = smName;
-                    const shipping_method_id: string | null = (sm as any).id ?? null;
+                    const shipping_method_id: string | null =
+                        (sm as any).id ?? null;
                     const shipping_option_id: string | null =
-                        (sm as any).shipping_option_id ?? (sm as any).shipping_option?.id ?? null;
+                        (sm as any).shipping_option_id ??
+                        (sm as any).shipping_option?.id ??
+                        null;
                     const amount =
                         typeof (sm as any).total === "number"
                             ? (sm as any).total
@@ -120,7 +127,9 @@ export function createAnalyticsService(
                         shipping_option_id: null
                     };
                     row.revenue += amount;
-                    if (oid) row.orders.add(oid);
+                    if (oid) {
+                        row.orders.add(oid);
+                    }
                     row.title ??= name;
                     row.shipping_method_id ??= shipping_method_id;
                     row.shipping_option_id ??= shipping_option_id;
