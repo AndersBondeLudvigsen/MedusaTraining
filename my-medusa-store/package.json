@@ -23,7 +23,7 @@
     "seedCustomers": "medusa exec ./src/scripts/seed-customers.ts",
     "fulfillAllOrders": "medusa exec ./src/scripts/fulfill-all-orders.ts",
     "testFulfillOne": "medusa exec ./src/scripts/test-fulfill-one.ts",
-    "create-returns": "medusa exec ./src/scripts/create-returns-first-three.ts",
+    "create-returns": "medusa exec ./src/scripts/create-returns.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",

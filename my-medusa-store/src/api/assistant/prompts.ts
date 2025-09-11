@@ -27,6 +27,9 @@ export function getCombinedPrompt(wantsChart?: boolean): string {
 - Analyzing customer behavior and purchase history
 - Providing personalized customer service insights
 
+## PRICE LISTS RULES
+- When creating a price list, call it title and not name
+
 ## ORDER MANAGEMENT
 - Processing and tracking orders through their lifecycle
 - Managing fulfillments, shipments, and deliveries
