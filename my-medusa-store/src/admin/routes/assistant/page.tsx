@@ -1,6 +1,5 @@
 "use client";
 import { useAssistant } from "./hooks/useAssistant";
-import { CategorySelect } from "./components/CategorySelect";
 import { ChartControls } from "./components/ChartControls";
 import { PromptInput } from "./components/PromptInput";
 import { ResponseView } from "./components/ResponseView";
@@ -16,7 +15,6 @@ prompt, setPrompt,
 wantsChart, setWantsChart,
 chartType, setChartType,
 chartTitle, setChartTitle,
-category, setCategory,
 answer, chart, loading, error,
 canSubmit, ask, clear,
 } = useAssistant();
@@ -30,21 +28,9 @@ return (
 
 
 <div className="px-6 py-4 grid gap-3">
-<Text size="small">Ask the assistant for help with merchandising, pricing, and more.</Text>
+<Text size="small">Ask the assistant for help with products, customers, orders, promotions, and more.</Text>
 
-
-<CategorySelect value={category} onChange={setCategory} />
-
-
-{category && (
-<div className="text-xs text-ui-fg-muted bg-ui-bg-subtle px-2 py-1 rounded border">
-<strong>Context:</strong> {category.charAt(0).toUpperCase() + category.slice(1)} focus mode
-</div>
-)}
-
-
-<PromptInput value={prompt} onChange={setPrompt} category={category} onSubmit={ask} />
-
+<PromptInput value={prompt} onChange={setPrompt} onSubmit={ask} />
 
 <ChartControls
 wantsChart={wantsChart}

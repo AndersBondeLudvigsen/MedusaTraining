@@ -16,7 +16,19 @@ export function createOrdersRepo(http: Http): {
         const limit = 200;
         let offset = 0;
         const acc: AdminOrderMinimal[] = [];
-        const base = { created_at: { gte: fromIso, lt: toIso } } as const;
+        const base = {
+            created_at: { gte: fromIso, lt: toIso },
+            fields: [
+                "+id",
+                "+created_at",
+                "+canceled_at",
+                "+items",
+                "+shipping_methods",
+                "+shipping_methods.id",
+                "+shipping_methods.name",
+                "+shipping_methods.shipping_option_id"
+            ].join(",")
+        } as const;
         // paginate
         while (true) {
             const q = { ...base, limit, offset } as Record<string, unknown>;
@@ -34,7 +46,9 @@ export function createOrdersRepo(http: Http): {
                         id: o.id,
                         created_at: o.created_at,
                         canceled_at: o.canceled_at,
-                        items: o.items
+                        // Some setups return minimal items on list; still pass through whatever we got.
+                        items: o.items,
+                        shipping_methods: (o as any).shipping_methods
                     });
                 }
             }
@@ -53,22 +67,50 @@ export function createOrdersRepo(http: Http): {
         const list = await listInRange(fromIso, toIso);
         const detailed = await Promise.all(
             list.map(async (o) => {
-                if (Array.isArray(o.items) && o.items.length) {
+                // If we already have both items and shipping methods on the list payload,
+                // avoid fetching the order detail again.
+                const hasItems =
+                    Array.isArray((o as any).items) &&
+                    (o as any).items.length > 0;
+                const hasShipping =
+                    Array.isArray((o as any).shipping_methods) &&
+                    (o as any).shipping_methods.length > 0;
+                const hasShippingOptionIds = hasShipping
+                    ? ((o as any).shipping_methods as any[]).some(
+                          (m) => (m as any)?.shipping_option_id
+                      )
+                    : false;
+
+                if (!o.id) {
+                    return {
+                        ...o,
+                        items: [],
+                        shipping_methods: []
+                    } as AdminOrderMinimal;
+                }
+                // If shipping methods exist but lack shipping_option_id, fetch detail to normalize keys
+                if (hasItems && hasShipping && hasShippingOptionIds) {
                     return o;
                 }
-                if (!o.id) {
-                    return { ...o, items: [] } as AdminOrderMinimal;
-                }
+
                 try {
                     const detail = await http.get<{
                         order?: AdminOrderMinimal;
                     }>(`/admin/orders/${encodeURIComponent(o.id)}`);
                     return {
                         ...o,
-                        items: detail?.order?.items ?? []
+                        items: detail?.order?.items ?? o.items ?? [],
+                        shipping_methods:
+                            detail?.order?.shipping_methods ??
+                            o.shipping_methods ??
+                            []
                     } as AdminOrderMinimal;
                 } catch {
-                    return { ...o, items: [] } as AdminOrderMinimal;
+                    return {
+                        ...o,
+                        items: o.items ?? [],
+                        shipping_methods: o.shipping_methods ?? []
+                    } as AdminOrderMinimal;
                 }
             })
         );

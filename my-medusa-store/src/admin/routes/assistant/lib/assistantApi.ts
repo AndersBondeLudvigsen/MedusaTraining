@@ -15,13 +15,12 @@ export type AskPayload = {
 prompt: string;
 wantsChart: boolean;
 chartType: "bar" | "line";
-category: string;
 chartTitle?: string;
 };
 
 
 export async function askAssistant(payload: AskPayload): Promise<AssistantResponse> {
-const res = await fetch("/assistant", {
+const res = await fetch("/admin/assistant", {
 method: "POST",
 headers: { "Content-Type": "application/json" },
 credentials: "include",

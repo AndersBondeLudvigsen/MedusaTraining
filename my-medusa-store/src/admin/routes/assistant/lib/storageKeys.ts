@@ -5,5 +5,4 @@ chart: "assistant:chart",
 wantsChart: "assistant:wantsChart",
 chartType: "assistant:chartType",
 chartTitle: "assistant:chartTitle",
-category: "assistant:category",
 } as const;

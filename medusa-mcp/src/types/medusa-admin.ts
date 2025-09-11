@@ -14,8 +14,18 @@ export type AdminOrderItemMaybe = {
     title?: string | null;
     sku?: string | null;
     variant_id?: string | null;
-    product_id?: string | null; // some setups include this
+    product_id?: string | null;
     variant?: AdminVariantMaybe | null; // when expanded/detail
+};
+
+export type AdminShippingMethodMaybe = {
+    id?: string;
+    name?: string | null;
+    amount?: number;
+    total?: number;
+    subtotal?: number;
+    shipping_option_id?: string | null;
+    shipping_option?: { id?: string; name?: string | null } | null;
 };
 
 export type AdminOrderMinimal = {
@@ -23,6 +33,7 @@ export type AdminOrderMinimal = {
     created_at?: string;
     canceled_at?: string | null;
     items?: AdminOrderItemMaybe[]; // present on detail; sometimes on list depending on setup
+    shipping_methods?: AdminShippingMethodMaybe[]; // present on detail
 };
 
 export type VariantResolution = {
@@ -30,3 +41,5 @@ export type VariantResolution = {
     title?: string | null;
     sku?: string | null;
 };
+
+

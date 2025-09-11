@@ -5,7 +5,7 @@ type AnalyticsService = {
     salesAggregate: (params: {
         start: string;
         end: string;
-        group_by: "product" | "variant";
+        group_by: "product" | "variant" | "shipping";
         metric: "quantity" | "revenue" | "orders";
         limit?: number;
         sort?: "asc" | "desc";
@@ -15,6 +15,8 @@ type AnalyticsService = {
             variant_id: string | null;
             sku: string | null;
             title: string | null;
+            shipping_method_id?: string | null;
+            shipping_option_id?: string | null;
             quantity: number;
             revenue: number;
             orders: number;
@@ -23,9 +25,13 @@ type AnalyticsService = {
     >;
 };
 
-export function createAnalyticsTools(analytics: AnalyticsService) {
+export function createAnalyticsTools(
+    analytics: AnalyticsService
+): Array<ReturnType<typeof defineTool>> {
     // alias coercers
-    const coerceRange = (input: Record<string, unknown>) => {
+    const coerceRange = (
+        input: Record<string, unknown>
+    ): { start?: string; end?: string } => {
         const s =
             (input.start as string | undefined) ||
             (input.start_date as string | undefined) ||
@@ -39,7 +45,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
 
     const coerceGroupBy = (
         input: Record<string, unknown>
-    ): "product" | "variant" | undefined => {
+    ): "product" | "variant" | "shipping" | undefined => {
         const raw =
             (input.group_by as string | undefined) ||
             (input.grouping as string | undefined) ||
@@ -54,6 +60,15 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
         }
         if (v.startsWith("variant")) {
             return "variant";
+        }
+        if (
+            v.startsWith("shipping") ||
+            v.startsWith("shipping_method") ||
+            v.startsWith("shipping-method") ||
+            v.startsWith("shipping option") ||
+            v.startsWith("shipping_option")
+        ) {
+            return "shipping";
         }
         return undefined;
     };
@@ -74,10 +89,26 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
         if (["quantity", "qty", "units", "unit"].includes(v)) {
             return "quantity";
         }
-        if (["orders", "order", "order_count", "num_orders"].includes(v)) {
+        if (
+            ["orders", "order", "order_count", "num_orders", "count"].includes(
+                v
+            )
+        ) {
             return "orders";
         }
-        if (["revenue", "sales", "amount", "gmv", "turnover"].includes(v)) {
+        if (
+            [
+                "revenue",
+                "sales",
+                "amount",
+                "gmv",
+                "turnover",
+                "sum",
+                "total",
+                "total_sales",
+                "sum_sales"
+            ].includes(v)
+        ) {
             return "revenue";
         }
         return undefined;
@@ -118,7 +149,7 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
     const sales_aggregate = defineTool((z) => ({
         name: "sales_aggregate",
         description:
-            "Aggregate sales in a UTC date range with grouping and metric. Returns actable IDs.",
+            "Aggregate sales in a UTC date range with grouping and metric. Group by: product, variant, or shipping (method). Metric accepts: quantity (qty/units), revenue (sales/amount/total/sum), orders (count).",
         inputSchema: {
             start: z.string().datetime().optional(),
             end: z.string().datetime().optional(),
@@ -127,27 +158,24 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             from: z.string().datetime().optional(),
             to: z.string().datetime().optional(),
 
-            group_by: z
-                .union([z.literal("product"), z.literal("variant")])
-                .optional(),
+            // Accept any string for group_by and metric; we coerce/validate in handler
+            group_by: z.string().optional(),
             grouping: z.string().optional(),
             group: z.string().optional(),
             groupby: z.string().optional(),
 
-            metric: z
-                .union([
-                    z.literal("quantity"),
-                    z.literal("revenue"),
-                    z.literal("orders")
-                ])
-                .optional(),
+            metric: z.string().optional(),
             measure: z.string().optional(),
             by: z.string().optional(),
             agg: z.string().optional(),
             aggregate: z.string().optional(),
 
             limit: z.number().int().min(1).max(50).default(5),
-            sort: z.union([z.literal("desc"), z.literal("asc")]).default("desc")
+            sort: z
+                .union([z.literal("desc"), z.literal("asc")])
+                .default("desc"),
+            order: z.string().optional(),
+            order_by: z.string().optional()
         },
         handler: async (input: Record<string, unknown>): Promise<unknown> => {
             const rng = coerceRange(input);
@@ -161,12 +189,12 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
             const metric = coerceMetric(input);
             if (!group_by) {
                 throw new Error(
-                    "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product'/'product_id' or 'variant'/'variant_id'."
+                    "Missing or invalid grouping. Use 'group_by' (or 'grouping') with 'product', 'variant', or 'shipping' (method)."
                 );
             }
             if (!metric) {
                 throw new Error(
-                    "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders'."
+                    "Missing or invalid metric. Use 'metric' (or 'measure') with 'quantity'|'revenue'|'orders' (aliases: qty/units, sales/amount/total/sum, count)."
                 );
             }
 
@@ -174,16 +202,35 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 typeof input.limit === "number" && Number.isInteger(input.limit)
                     ? Math.max(1, Math.min(50, input.limit))
                     : 5;
-            const sort = (
-                String(input.sort ?? "desc").toLowerCase() === "asc"
-                    ? "asc"
-                    : "desc"
-            ) as "asc" | "desc";
+            // Sort coercion: support 'order' and 'order_by' like "quantity asc"
+            const sortToken = ((): string => {
+                const o = (input.order as string | undefined)?.toLowerCase();
+                const ob = (
+                    input.order_by as string | undefined
+                )?.toLowerCase();
+                if (o === "asc" || o === "desc") {
+                    return o;
+                }
+                if (ob?.includes("asc")) {
+                    return "asc";
+                }
+                if (ob?.includes("desc")) {
+                    return "desc";
+                }
+                return String(input.sort ?? "desc").toLowerCase();
+            })();
+            const sort = (sortToken === "asc" ? "asc" : "desc") as
+                | "asc"
+                | "desc";
 
             const schema = z.object({
                 start: z.string().datetime(),
                 end: z.string().datetime(),
-                group_by: z.union([z.literal("product"), z.literal("variant")]),
+                group_by: z.union([
+                    z.literal("product"),
+                    z.literal("variant"),
+                    z.literal("shipping")
+                ]),
                 metric: z.union([
                     z.literal("quantity"),
                     z.literal("revenue"),
@@ -213,6 +260,10 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 sort: parsed.data.sort
             });
 
+            const titleGroup =
+                parsed.data.group_by === "shipping"
+                    ? "shipping methods"
+                    : `${parsed.data.group_by}s`;
             return {
                 start: parsed.data.start,
                 end: parsed.data.end,
@@ -221,10 +272,12 @@ export function createAnalyticsTools(analytics: AnalyticsService) {
                 results: rows,
                 xKey: "rank",
                 yKey: "value",
-                title: `Top ${parsed.data.group_by}s by ${parsed.data.metric}`
+                title: `Top ${titleGroup} by ${parsed.data.metric}`
             };
         }
     }));
 
     return [orders_count, sales_aggregate];
 }
+
+
