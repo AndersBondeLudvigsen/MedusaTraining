@@ -74,3 +74,4 @@ export function getCategoryPrompt(
   console.warn('getCategoryPrompt is deprecated, use getCombinedPrompt instead');
   return getCombinedPrompt(wantsChart);
 }
+

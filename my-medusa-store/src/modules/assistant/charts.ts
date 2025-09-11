@@ -195,8 +195,7 @@ function chartFromChildObjects(
     if (label == null) label = key;
     const yVal =
       typeof obj[chosenY!] === "number"
-        ? obj[chosenY!]
-        : Number(obj[chosenY!]) || 0;
+        ? obj[chosenY!] : Number(obj[chosenY!]) || 0;
     return { label, [chosenY!]: yVal };
   });
 
@@ -416,3 +415,4 @@ export function buildChartFromAnswer(
   // As a last resort, try the generic fallback on this JSON
   return genericChartFromPayload(maybe, chartType, title);
 }
+

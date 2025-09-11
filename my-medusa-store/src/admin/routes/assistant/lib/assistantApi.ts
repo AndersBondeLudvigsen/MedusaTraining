@@ -20,7 +20,7 @@ chartTitle?: string;
 
 
 export async function askAssistant(payload: AskPayload): Promise<AssistantResponse> {
-const res = await fetch("/assistant", {
+const res = await fetch("/admin/assistant", {
 method: "POST",
 headers: { "Content-Type": "application/json" },
 credentials: "include",
