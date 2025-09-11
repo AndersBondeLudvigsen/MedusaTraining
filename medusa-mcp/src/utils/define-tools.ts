@@ -19,7 +19,7 @@ export const defineTool = (
     const tool = cb(z);
 
     const wrappedHandler = async (
-        input: InferToolHandlerInput<Zod.ZodAny, Zod.ZodAny>,
+        input: InferToolHandlerInput<any, ZodAny>,
         _: RequestHandlerExtra
     ): Promise<{
         content: CallToolResult["content"];
