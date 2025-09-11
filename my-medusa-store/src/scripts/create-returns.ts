@@ -10,16 +10,35 @@ import {
 
 type OrderItem = { id: string; quantity?: number; fulfilled_quantity?: number };
 
-export default async function createReturnsForFirstThree({ container }: ExecArgs) {
+function parseOrderIdFromArgs(args: string[] = []): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a.startsWith("--order-id=")) {
+      return a.split("=").slice(1).join("=")
+    }
+    if (a === "--order-id" || a === "-o") {
+      return args[i + 1]
+    }
+    if (/^order_[A-Za-z0-9]/.test(a)) {
+      return a
+    }
+  }
+  return undefined
+}
+
+export default async function createReturnsForFirstThree({ container, args }: ExecArgs) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER);
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
 
   // Paste your order ID here
-  const ORDER_ID = "order_01K4SEVR7PDSQMZ0Y8Z55SEDJM";
+  const ORDER_ID =
+    parseOrderIdFromArgs(args) ||
+    process.env.ORDER_ID ||
+    "order_01K4SEVR7PDSQMZ0Y8Z55SEDJM";
 
   if (!ORDER_ID) {
     logger.warn(
-      "Please set ORDER_ID in src/scripts/create-returns-first-three.ts before running this script."
+      "Please provide an order ID via --order-id, env ORDER_ID, or update the script constant."
     );
     return;
   }
