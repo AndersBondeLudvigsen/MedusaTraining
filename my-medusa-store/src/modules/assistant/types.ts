@@ -20,3 +20,4 @@ export type ChartSpec = {
   yKey: string;
   data: Array<Record<string, string | number>>;
 };
+

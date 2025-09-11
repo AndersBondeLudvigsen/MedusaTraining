@@ -1,45 +1,51 @@
-import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
+import { MedusaService } from "@medusajs/framework/utils";
 import { getMcp } from "../../lib/mcp/manager";
 import { metricsStore, withToolLogging } from "../../lib/metrics/store";
-import { McpTool, HistoryEntry, ChartType } from "./types";
+import { ChartType, HistoryEntry, McpTool } from "./types";
 import { extractToolJsonPayload, normalizeToolArgs } from "./utils";
-import { buildChartFromLatestTool, buildChartFromAnswer } from "./charts";
-import { planNextStepWithGemini } from "./service";
+import { buildChartFromAnswer, buildChartFromLatestTool } from "./charts";
+import { planNextStepWithGemini } from "./planner";
 import { collectGroundTruthNumbers } from "./validation";
 
-export async function POST(req: MedusaRequest, res: MedusaResponse) {
-  try {
-    const body = (req.body ?? {}) as {
-      prompt?: string;
-      wantsChart?: boolean;
-      chartType?: ChartType;
-      chartTitle?: string;
-    };
+type AskInput = {
+  prompt: string;
+  wantsChart?: boolean;
+  chartType?: ChartType;
+  chartTitle?: string;
+};
 
-    const prompt = body.prompt?.trim();
+class AssistantModuleService extends MedusaService({}) {
+  private readonly maxSteps = 15;
+
+  constructor(container: any, options: any = {}) {
+    super(container, options);
+  }
+
+  async ask(input: AskInput): Promise<{
+    answer?: string;
+    chart: any | null;
+    data: any | null;
+    history: HistoryEntry[];
+  }> {
+    const prompt = input.prompt?.trim();
     if (!prompt) {
-      return res.status(400).json({ error: "Missing prompt" });
+      throw new Error("Missing prompt");
     }
 
-    const wantsChart = Boolean(body.wantsChart);
-    const chartType: ChartType = body.chartType === "line" ? "line" : "bar";
+    const wantsChart = Boolean(input.wantsChart);
+    const chartType: ChartType = input.chartType === "line" ? "line" : "bar";
     const chartTitle =
-      typeof body.chartTitle === "string" ? body.chartTitle : undefined;
+      typeof input.chartTitle === "string" ? input.chartTitle : undefined;
 
     const mcp = await getMcp();
-
     const tools = await mcp.listTools();
     let availableTools: McpTool[] = (tools.tools ?? []) as any;
 
-
-
-
     const history: HistoryEntry[] = [];
-    const maxSteps = 15;
 
     const turnId = metricsStore.startAssistantTurn({ user: prompt });
 
-    for (let step = 0; step < maxSteps; step++) {
+    for (let step = 0; step < this.maxSteps; step++) {
       console.log(`\n--- 🔄 AGENT LOOP: STEP ${step + 1} ---`);
 
       const plan = await planNextStepWithGemini(
@@ -52,10 +58,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       );
 
       if (plan.action === "final_answer") {
-        // 🔸 END turn with final message
         metricsStore.endAssistantTurn(turnId, plan.answer ?? "");
 
-        // 🔸 Auto-validate the answer using any grounded numbers we collected
         const t = metricsStore.getLastTurn?.();
         const grounded = t?.groundedNumbers ?? {};
         for (const [label, value] of Object.entries(grounded)) {
@@ -73,12 +77,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             null
           : null;
 
-        return res.json({
+        return {
           answer: plan.answer,
           chart,
           data: latestPayload ?? null,
           history,
-        });
+        };
       }
 
       if (plan.action === "call_tool" && plan.tool_name && plan.tool_args) {
@@ -120,17 +124,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       }
     }
 
-    // If we got here, we exceeded max steps
     metricsStore.endAssistantTurn(turnId, "[aborted: max steps exceeded]");
-    return res.status(500).json({
-      error:
-        "The agent could not complete the request within the maximum number of steps.",
-      history,
-    });
-  } catch (e: any) {
-    console.error("\n--- 💥 UNCAUGHT EXCEPTION ---");
-    console.error(e);
-    console.error("--------------------------\n");
-    return res.status(500).json({ error: e?.message ?? String(e) });
+    throw new Error(
+      "The agent could not complete the request within the maximum number of steps."
+    );
   }
 }
+
+export default AssistantModuleService;

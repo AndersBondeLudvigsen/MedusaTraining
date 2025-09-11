@@ -1,4 +1,4 @@
-// Common utilities used by the assistant route
+// Common utilities used by the assistant module
 
 export function env(key: string): string | undefined {
   return (process.env as any)?.[key];
@@ -99,3 +99,4 @@ export function normalizeToolArgs(input: any): any {
 
   return walk(input);
 }
+
