@@ -432,20 +432,25 @@ export default async function seedPendingOrders({ container }: ExecArgs) {
             },
           });
         paymentCollectionId = pcs?.[0]?.id;
-        logger.info(`Created payment collection for order ${order.id} (not paid yet).`);
+        logger.info(
+          `Created payment collection for order ${order.id} (not paid yet).`
+        );
       }
 
       // DO NOT mark payment as paid and DO NOT create fulfillment
       // This leaves the order in a pending state with:
       // - payment_status: "awaiting"
       // - fulfillment_status: "not_fulfilled"
-      
-      logger.info(`Order ${order.id} left in pending state (payment: awaiting, fulfillment: not_fulfilled)`);
-      
+
+      logger.info(
+        `Order ${order.id} left in pending state (payment: awaiting, fulfillment: not_fulfilled)`
+      );
     } catch (error) {
       logger.error(`Failed to create pending order: ${error.message}`);
     }
   }
 
-  logger.info(`Attempted to seed ${ordersNum} pending orders (no payments or fulfillments processed).`);
+  logger.info(
+    `Attempted to seed ${ordersNum} pending orders (no payments or fulfillments processed).`
+  );
 }
